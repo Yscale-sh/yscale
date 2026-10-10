@@ -1,0 +1,43 @@
+# yscale configuration
+# Secrets (FLYIO_TOKEN, TS_AUTHKEY, K3S_TOKEN) are read from environment variables.
+
+backend:
+  type: flyio
+  flyio:
+    org: personal
+    region: ord
+    agentImage: registry.example.invalid/yscale-burst:replace-with-your-image
+
+# Join mode: how burst nodes join the cluster.
+# "k3s"     - K3s agent binary (for K3s clusters). Requires K3S_TOKEN env var.
+# "kubelet" - Standard kubelet bootstrap (for LKE, EKS, GKE, kubeadm clusters).
+join:
+  mode: k3s
+  # K3s mode settings:
+  k3sServerURL: "https://your-kubernetes-api.example.invalid:6443"
+  # Kubelet mode settings (uncomment for LKE/standard K8s):
+  # mode: kubelet
+  # apiServer: "https://xxx.lke.linode.com:443"
+  # clusterCA: "<base64-encoded CA cert from kubeconfig>"
+
+tailscale:
+  enabled: true
+  tailnet: "your-tailnet.ts.net"
+  tagPrefix: yscale-burst
+
+scaling:
+  maxNodes: 10
+  scaleDownDelay: 5m
+  pollInterval: 10s
+  pendingThreshold: 10s
+  nodeReadyTimeout: 2m
+  prewarmPool: 0              # must remain 0 for Fly in this release; safe warm activation is not enabled
+  maxConcurrentProvisions: 1  # max nodes to provision simultaneously (1 = sequential)
+  nodeResources:
+    cpuMillis: 2000           # 1000 = 1 CPU
+    memoryMB: 4096
+
+cluster:
+  podCIDR: "10.42.0.0/16"
+  serviceCIDR: "10.43.0.0/16"
+  coreDNSIP: "10.43.0.10"

@@ -1,0 +1,118 @@
+{
+  "schema_version": 1,
+  "result": "passed",
+  "scope": "deterministic_control_plane",
+  "seams": [
+    {
+      "seam": "api_cross_tenant_workload_access",
+      "package": "github.com/yscale-sh/yscale/central/internal/handlers",
+      "tests": [
+        "TestCrossTenantWorkloadAccessDenied"
+      ],
+      "outcome": "cross_tenant_read_and_mutation_denied_without_side_effect"
+    },
+    {
+      "seam": "tenant_workload_log_isolation",
+      "package": "github.com/yscale-sh/yscale/central/internal/handlers",
+      "tests": [
+        "TestTenantWorkloadRoutesHideUnknownRevokedAndNonMemberIdentically"
+      ],
+      "outcome": "cross_tenant_workload_logs_return_uniform_not_found"
+    },
+    {
+      "seam": "tenant_billing_customer_facing_authorization",
+      "package": "github.com/yscale-sh/yscale/central/internal/handlers",
+      "tests": [
+        "TestTenantBillingSummaryIsMemberSafeAndTenantIsolated",
+        "TestTenantBillingStatementJSONAndCSVAreBoundedTenantSafeSnapshots",
+        "TestTenantCheckoutPersistsBeforeProviderAndIsExactlyReplayable"
+      ],
+      "outcome": "cross_tenant_billing_summary_statement_and_checkout_denied_before_billing_or_checkout_dispatch"
+    },
+    {
+      "seam": "connector_credential_scope",
+      "package": "github.com/yscale-sh/yscale/central/internal/handlers",
+      "tests": [
+        "TestConnectorCredentialIsScopedToAgentRoutes"
+      ],
+      "outcome": "connector_credential_refused_off_its_agent_surface"
+    },
+    {
+      "seam": "connector_scoped_dispatch_binding",
+      "package": "github.com/yscale-sh/yscale/central/internal/handlers",
+      "tests": [
+        "TestConnectorSubmitAuthRefusesASiblingClusterHeader",
+        "TestConnectorWorkloadAuthRefusesWorkloadsOutsideItsCluster"
+      ],
+      "outcome": "cross_cluster_submit_and_workload_dispatch_denied"
+    },
+    {
+      "seam": "agent_websocket_hello_binding",
+      "package": "github.com/yscale-sh/yscale/central/internal/handlers",
+      "tests": [
+        "TestAgentStreamScopedCredentialEnforcesHelloBinding",
+        "TestAgentStreamRefusesCrossTenantHello"
+      ],
+      "outcome": "wrong_or_cross_tenant_hello_closes_socket_and_registers_no_agent"
+    },
+    {
+      "seam": "central_cluster_ownership",
+      "package": "github.com/yscale-sh/yscale/central/internal/handlers",
+      "tests": [
+        "TestClusterOwner_CrossTenantRejected",
+        "TestMintKey_ExplicitClusterOwnershipUnchanged"
+      ],
+      "outcome": "foreign_cluster_id_rejected_at_ownership_check_and_at_mint"
+    },
+    {
+      "seam": "state_route_and_command_ownership",
+      "package": "github.com/yscale-sh/yscale/central/internal/state",
+      "tests": [
+        "TestClaimAgentCluster",
+        "TestConnectorCommandScopeConflictAndDeadLetter",
+        "TestReapUnheldClusterGatewayRoutesRefusesAnUnknownTenant",
+        "TestSetCustomerGatewayRoutesRefusesAnotherTenantsCluster"
+      ],
+      "outcome": "cross_tenant_cluster_claim_route_write_command_ack_and_unknown_tenant_route_reap_all_refused"
+    },
+    {
+      "seam": "agent_bootstrap_node_identity",
+      "package": "github.com/yscale-sh/yscale/agent/internal/agent",
+      "tests": [
+        "TestHandleBootstrap_RejectsNodeNameMismatch",
+        "TestBootstrapAuthExtraGroups",
+        "TestEligibilityPolicy"
+      ],
+      "outcome": "mismatched_or_unbound_node_name_refused_at_bootstrap_and_csr_approver"
+    },
+    {
+      "seam": "foreign_node_ownership_filtering",
+      "package": "github.com/yscale-sh/yscale/agent/internal/agent",
+      "tests": [
+        "TestNodeWatcherReportsOnlyItsClusterNodes",
+        "TestNodeWatcherIgnoresForeignAndMalformedNodeNames",
+        "TestIdleWatcherReportsOnlyItsClusterNodes"
+      ],
+      "outcome": "foreign_or_malformed_burst_nodes_dropped_at_source"
+    },
+    {
+      "seam": "provider_reconciliation_ownership_filtering",
+      "package": "github.com/yscale-sh/yscale/central/internal/decider",
+      "tests": [
+        "TestProviderReconciliationFailurePathsAndOwnershipFiltering"
+      ],
+      "outcome": "provider_resources_lacking_our_owner_tag_never_enter_inventory"
+    }
+  ],
+  "postures": [
+    {
+      "seam": "central_operator_telemetry",
+      "verification": "TestCentralTelemetryPostureIsOperatorOnly",
+      "outcome": "metrics_and_system_logs_operator_only_tenant_workload_logs_scoped_separately"
+    }
+  ],
+  "remaining_live_evidence": [
+    "mesh_network_reachability",
+    "paid_flow_activation"
+  ]
+}

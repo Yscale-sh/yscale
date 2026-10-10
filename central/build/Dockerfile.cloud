@@ -1,0 +1,8 @@
+# Minimal runtime image for yscale-cloud. The binary is cross-compiled
+# on the host (see `make cloud-image-build`) — building inside a
+# constrained buildkit container OOMs on aws-sdk-go-v2's S3 codegen.
+FROM alpine:3.21
+RUN apk add --no-cache ca-certificates
+COPY bin/yscale-cloud-linux-amd64 /usr/local/bin/yscale-cloud
+EXPOSE 8443
+ENTRYPOINT ["/usr/local/bin/yscale-cloud"]

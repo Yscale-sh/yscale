@@ -1,0 +1,15 @@
+# Patterns to ignore when packaging the chart.
+.DS_Store
+.git/
+.gitignore
+.svn/
+.bzr/
+.hg/
+*.tmproj
+*.swp
+*.bak
+*.tgz
+*.orig
+.idea/
+.vscode/
+OWNERS

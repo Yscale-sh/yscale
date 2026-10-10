@@ -1,0 +1,103 @@
+{{- if .Values.cilium.scaffold.enabled }}
+# "Cilium-of-one" scaffolding — installed as part of the agent release so
+# tier=full bursts can run host-mode Cilium against THIS cluster without the
+# customer running Cilium as their CNI. The customer's own CNI is untouched;
+# only yscale burst nodes run cilium-agent (as a host process baked into the
+# burst image). Replaces the manual deploy/quickstart/seed-cilium-scaffolding.sh
+# (which was un-wired and easy to forget). CRDs ship in the chart's crds/ dir.
+#
+# Set cilium.scaffold.enabled=false for a customer that ALREADY runs Cilium —
+# otherwise this would clobber their kube-system/cilium-config.
+#
+# The cilium-config ConfigMap below is rendered from .Values.cilium.config, so
+# `helm upgrade` reconciles it automatically and bursts pick up the new values
+# at their next boot (they fetch this ConfigMap over the apiserver at startup).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cilium
+  namespace: kube-system
+  labels:
+    {{- include "yscale-agent.labels" . | nindent 4 }}
+    app.kubernetes.io/component: cilium-scaffold
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: cilium
+  labels:
+    {{- include "yscale-agent.labels" . | nindent 4 }}
+    app.kubernetes.io/component: cilium-scaffold
+rules:
+  - apiGroups: [""]
+    resources: ["nodes", "endpoints", "services", "pods", "namespaces", "componentstatuses"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["nodes/status"]
+    verbs: ["patch"]
+  - apiGroups: [""]
+    resources: ["pods", "pods/finalizers"]
+    verbs: ["get", "list", "watch", "update", "delete"]
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["cilium.io"]
+    resources:
+      - ciliumnetworkpolicies
+      - ciliumclusterwidenetworkpolicies
+      - ciliumendpoints
+      - ciliumidentities
+      - ciliumnodes
+      - ciliumlocalredirectpolicies
+      - ciliumenvoyconfigs
+      - ciliumclusterwideenvoyconfigs
+      - ciliuml2announcementpolicies
+      - ciliumpodippools
+      - ciliumloadbalancerippools
+      - ciliumcidrgroups
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["cilium.io"]
+    resources:
+      - ciliumendpoints/status
+      - ciliumnodes/status
+      - ciliumidentities/status
+    verbs: ["patch", "update"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["create", "get", "list", "update"]
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    verbs: ["get", "list", "watch", "create", "update"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: cilium
+  labels:
+    {{- include "yscale-agent.labels" . | nindent 4 }}
+    app.kubernetes.io/component: cilium-scaffold
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cilium
+subjects:
+  - kind: ServiceAccount
+    name: cilium
+    namespace: kube-system
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cilium-config
+  namespace: kube-system
+  labels:
+    {{- include "yscale-agent.labels" . | nindent 4 }}
+    app.kubernetes.io/component: cilium-scaffold
+data:
+  {{- range $k, $v := .Values.cilium.config }}
+  {{ $k }}: {{ $v | quote }}
+  {{- end }}
+{{- end }}

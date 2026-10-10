@@ -1,0 +1,213 @@
+# promtool unit tests for yscale-reliability-alerts.yaml.
+#
+# These are the firing proofs for the stuck-provisioning rewrite: a burst that
+# is still provisioning fires, a completed-start latency histogram on its own
+# never can, and a healthy or absent live view stays quiet.
+#
+# They are run by test/alertrules (inside `go test ./...`) when promtool is on
+# PATH. That test extracts the PrometheusRule's `.spec` — the whole point is to
+# evaluate the rules that actually ship, not a copy — into
+# yscale-reliability-alerts.rules.yaml beside a copy of this file, then runs
+# `promtool test rules`. The file is standalone-runnable the same way:
+#
+#   yq '.spec' yscale-reliability-alerts.yaml > yscale-reliability-alerts.rules.yaml
+#   promtool test rules yscale-reliability-alerts.test.yaml
+#
+# kustomization.yaml lists its resources explicitly, so nothing here is applied
+# to a cluster.
+rule_files:
+  - yscale-reliability-alerts.rules.yaml
+
+evaluation_interval: 1m
+
+tests:
+  - interval: 1m
+    name: unhealthy billing reconciliation pages after grace period
+    input_series:
+      - series: yscale_billing_reconciliation_enabled
+        values: 1+0x10
+      - series: yscale_billing_reconciliation_healthy
+        values: 0+0x10
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: BillingReconciliationUnhealthy
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: BillingReconciliationUnhealthy
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+            exp_annotations:
+              summary: "Billing ledger reconciliation is unhealthy"
+              description: >-
+                Billing materializations no longer reconcile with the append-only
+                ledger, the reconciliation query failed or became stale, or its
+                health metric disappeared. Paid burst admission is closed. Inspect
+                the bounded difference metrics and central logs; do not rewrite
+                balances automatically.
+
+  - interval: 1m
+    name: missing billing reconciliation evidence pages
+    input_series:
+      - series: yscale_billing_reconciliation_enabled
+        values: 1+0x10
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: BillingReconciliationUnhealthy
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+            exp_annotations:
+              summary: "Billing ledger reconciliation is unhealthy"
+              description: >-
+                Billing materializations no longer reconcile with the append-only
+                ledger, the reconciliation query failed or became stale, or its
+                health metric disappeared. Paid burst admission is closed. Inspect
+                the bounded difference metrics and central logs; do not rewrite
+                balances automatically.
+
+  - interval: 1m
+    name: unmanaged billing reconciliation stays quiet
+    input_series:
+      - series: yscale_billing_reconciliation_enabled
+        values: 0+0x10
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: BillingReconciliationUnhealthy
+        exp_alerts: []
+
+  - interval: 1m
+    name: any state persistence failure pages immediately
+    input_series:
+      - series: 'yscale_state_persistence_failures_total{entity="burst",operation="upsert"}'
+        values: 0 1+0x20
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: StatePersistenceFailures
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+            exp_annotations:
+              summary: "Yscale state persistence failures detected"
+              description: >-
+                One or more Yscale state write-throughs failed in the last 15
+                minutes. Fail-closed mutations returned an error; best-effort
+                operational observations may be replayed after restart. Check
+                PostgreSQL reachability and central logs before retrying work.
+
+  # A burst that is still provisioning past the threshold fires — and only
+  # after the configured for-duration, not on the first evaluation.
+  - interval: 1m
+    name: stale live provisioning fires after the for-duration
+    input_series:
+      - series: yscale_burst_provisioning_active
+        values: 2+0x30
+      - series: yscale_burst_provisioning_oldest_age_seconds
+        values: 361+60x30
+      - series: yscale_burst_provisioning_source_up
+        values: 1+0x30
+    alert_rule_test:
+      # Over threshold from the first sample, so pending — but 10m has not
+      # elapsed. A rule that fired here would page on every slow boot.
+      - eval_time: 9m
+        alertname: BurstStuckProvisioning
+        exp_alerts: []
+      - eval_time: 11m
+        alertname: BurstStuckProvisioning
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "Burst stuck provisioning for more than 6 minutes"
+              description: >-
+                A burst has been provisioning for over 6 minutes without its
+                workload reporting started (or its nodeOnly Node becoming Ready).
+                Check backend (Fly/Linode/AWS) node-boot latency and Cluster
+                Connector connectivity.
+      # The live view is readable throughout, so the fail-closed companion
+      # must stay silent.
+      - eval_time: 11m
+        alertname: BurstProvisioningVisibilityLost
+        exp_alerts: []
+
+  # The regression this rewrite exists for. These buckets put the completed
+  # created→started p95 at roughly 585s — well past 360 — which is exactly what
+  # the old histogram_quantile rule fired on. With nothing live provisioning,
+  # that says nothing about a stuck burst and must not page anyone.
+  - interval: 1m
+    name: completed-start latency alone cannot fire the stuck alert
+    input_series:
+      - series: 'yscale_burst_provision_seconds_bucket{le="300"}'
+        values: 0+0x40
+      - series: 'yscale_burst_provision_seconds_bucket{le="600"}'
+        values: 0+1x40
+      - series: 'yscale_burst_provision_seconds_bucket{le="+Inf"}'
+        values: 0+1x40
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: BurstStuckProvisioning
+        exp_alerts: []
+
+  # Bursts are provisioning, none of them for long. Nothing is wrong.
+  - interval: 1m
+    name: healthy live provisioning does not fire
+    input_series:
+      - series: yscale_burst_provisioning_active
+        values: 2+0x30
+      - series: yscale_burst_provisioning_oldest_age_seconds
+        values: 30+1x30
+      - series: yscale_burst_provisioning_source_up
+        values: 1+0x30
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: BurstStuckProvisioning
+        exp_alerts: []
+
+  # An idle fleet: the view is readable and reports nothing provisioning. This
+  # is the honest zero, and it is quiet.
+  - interval: 1m
+    name: absent live provisioning does not fire
+    input_series:
+      - series: yscale_burst_provisioning_active
+        values: 0+0x30
+      - series: yscale_burst_provisioning_oldest_age_seconds
+        values: 0+0x30
+      - series: yscale_burst_provisioning_source_up
+        values: 1+0x30
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: BurstStuckProvisioning
+        exp_alerts: []
+      - eval_time: 30m
+        alertname: BurstProvisioningVisibilityLost
+        exp_alerts: []
+
+  # The fail-closed path. Central could not read an authoritative lifecycle or
+  # state/workload view,
+  # so it publishes source_up 0 and omits the count and the age entirely.
+  # BurstStuckProvisioning has nothing to evaluate and stays quiet — which is
+  # why the visibility alert has to be the one that fires.
+  - interval: 1m
+    name: an unreadable live view fires visibility loss, not a fabricated stuck burst
+    input_series:
+      - series: yscale_burst_provisioning_source_up
+        values: 0+0x30
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: BurstProvisioningVisibilityLost
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: BurstProvisioningVisibilityLost
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+            exp_annotations:
+              summary: "Live burst provisioning view unreadable"
+              description: >-
+                The Yscale Control Plane has failed to read the authoritative
+                lifecycle or state/workload view for 10 minutes, so
+                BurstStuckProvisioning cannot see a stuck burst. Check Postgres
+                reachability from central.
+      - eval_time: 15m
+        alertname: BurstStuckProvisioning
+        exp_alerts: []

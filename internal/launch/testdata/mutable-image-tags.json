@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "manifest_id": "mutable-image-tags-fixture",
+  "synthetic": true,
+  "release": {
+    "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "tested_head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "tree": "cccccccccccccccccccccccccccccccccccccccc"
+  },
+  "release_images": [
+    {
+      "component": "cloud",
+      "ref": "example.test/synthetic/cloud:latest"
+    },
+    {
+      "component": "cluster-agent",
+      "ref": "example.test/synthetic/agent:v1.2.3"
+    },
+    {
+      "component": "hosted-controller",
+      "ref": "example.test/synthetic/hosted-controller"
+    }
+  ],
+  "gates": [],
+  "supported_cells": []
+}

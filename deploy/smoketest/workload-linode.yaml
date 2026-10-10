@@ -1,0 +1,37 @@
+# Linode CPU smoke test. Exercises the full SaaS path on Linode:
+#   1. kubectl apply -> agent reconciler -> central
+#   2. central decider routes to linode (explicit backend)
+#   3. linode backend ensures the bootstrap StackScript, creates an
+#      Ubuntu instance with it (g6-standard-1, us-ord)
+#   4. StackScript installs containerd+kubelet+tailscale, joins the
+#      yscale tailnet, fetches the kubeconfig from the agent
+#   5. kubelet registers as a ys-burst-* node
+#   6. ffmpeg runs the self-contained lavfi transcode, exits 0
+#   7. central reaps the burst — DeleteNode destroys the Linode instance
+#
+# Cold start is slow (~5-10 min: the StackScript installs everything at
+# boot). The baked-Image fast path is the planned follow-up.
+apiVersion: yscale.sh/v1
+kind: Workload
+metadata:
+  name: smoketest-linode
+  namespace: default
+spec:
+  image: linuxserver/ffmpeg:latest
+  backend: linode
+  size: small  # ~2GB -> Linode g6-standard-1
+  command: ["ffmpeg"]
+  args:
+    - "-y"
+    - "-f"
+    - "lavfi"
+    - "-i"
+    - "testsrc=duration=5:size=640x480:rate=30"
+    - "-c:v"
+    - "libx264"
+    - "-preset"
+    - "ultrafast"
+    - "-f"
+    - "null"
+    - "-"
+  retries: 0

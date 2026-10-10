@@ -1,0 +1,3092 @@
+{
+  "schema_version": 1,
+  "chart": "yscale-agent",
+  "release": "yscale-rbac-audit",
+  "namespace": "yscale",
+  "profiles": [
+    {
+      "name": "cluster-gke",
+      "scope": "cluster",
+      "bootstrap_auth_mode": "gke",
+      "allowed_namespaces": [
+        "team-a",
+        "team-b"
+      ],
+      "objects": [
+        {
+          "kind": "ClusterRole",
+          "name": "cilium",
+          "rules": [
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "componentstatuses",
+                "endpoints",
+                "namespaces",
+                "nodes",
+                "pods",
+                "services"
+              ],
+              "verbs": [
+                "get",
+                "list",
+                "watch"
+              ]
+            },
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "events"
+              ],
+              "verbs": [
+                "create",
+                "patch",
+                "update"
+              ]
+            },
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "nodes/status"
+              ],
+              "verbs": [
+                "patch"
+              ]
+            },
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "pods",
+                "pods/finalizers"
+              ],
+              "verbs": [
+                "delete",
+                "get",
+                "list",
+                "update",
+                "watch"
+              ]
+            },
+            {
+              "api_groups": [
+                "apiextensions.k8s.io"
+              ],
+              "resources": [
+                "customresourcedefinitions"
+              ],
+              "verbs": [
+                "create",
+                "get",
+                "list",
+                "update",
+                "watch"
+              ]
+            },
+            {
+              "api_groups": [
+                "cilium.io"
+              ],
+              "resources": [
+                "ciliumcidrgroups",
+                "ciliumclusterwideenvoyconfigs",
+                "ciliumclusterwidenetworkpolicies",
+                "ciliumendpoints",
+                "ciliumenvoyconfigs",
+                "ciliumidentities",
+                "ciliuml2announcementpolicies",
+                "ciliumloadbalancerippools",
+                "ciliumlocalredirectpolicies",
+                "ciliumnetworkpolicies",
+                "ciliumnodes",
+                "ciliumpodippools"
+              ],
+              "verbs": [
+                "create",
+                "delete",
+                "get",
+                "list",
+                "patch",
+                "update",
+                "watch"
+              ]
+            },
+            {
+              "api_groups": [
+                "cilium.io"
+              ],
+              "resources": [
+                "ciliumendpoints/status",
+                "ciliumidentities/status",
+                "ciliumnodes/status"
+              ],
+              "verbs": [
+                "patch",
+                "update"
+              ]
+            },
+            {
+              "api_groups": [
+                "coordination.k8s.io"
+              ],
+              "resources": [
+                "leases"
+              ],
+              "verbs": [
+                "create",
+                "get",
+                "list",
+                "update"
+              ]
+            },
+            {
+              "api_groups": [
+                "discovery.k8s.io"
+              ],
+              "resources": [
+                "endpointslices"
+              ],
+              "verbs": [
+                "get",
+                "list",
+                "watch"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "ClusterRole",
+          "name": "yscale-rbac-audit-yscale-agent-cluster",
+          "rules": [
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "namespaces"
+              ],
+              "verbs": [
+                "get",
+                "list"
+              ]
+            },
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "nodes"
+              ],
+              "verbs": [
+                "delete",
+                "get",
+                "list",
+                "patch",
+                "update",
+                "watch"
+              ]
+            },
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "serviceaccounts/token"
+              ],
+              "resource_names": [
+                "cilium"
+              ],
+              "verbs": [
+                "create"
+              ]
+            },
+            {
+              "api_groups": [
+                "certificates.k8s.io"
+              ],
+              "resources": [
+                "certificatesigningrequests"
+              ],
+              "verbs": [
+                "get",
+                "list",
+                "watch"
+              ]
+            },
+            {
+              "api_groups": [
+                "certificates.k8s.io"
+              ],
+              "resources": [
+                "certificatesigningrequests/approval"
+              ],
+              "verbs": [
+                "update"
+              ]
+            },
+            {
+              "api_groups": [
+                "certificates.k8s.io"
+              ],
+              "resources": [
+                "signers"
+              ],
+              "resource_names": [
+                "kubernetes.io/kube-apiserver-client-kubelet",
+                "kubernetes.io/kubelet-serving"
+              ],
+              "verbs": [
+                "approve"
+              ]
+            },
+            {
+              "api_groups": [
+                "networking.k8s.io"
+              ],
+              "resources": [
+                "servicecidrs"
+              ],
+              "verbs": [
+                "get",
+                "list",
+                "watch"
+              ]
+            },
+            {
+              "api_groups": [
+                "yscale.sh"
+              ],
+              "resources": [
+                "workloads"
+              ],
+              "verbs": [
+                "get",
+                "list",
+                "watch"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "ClusterRole",
+          "name": "yscale-rbac-audit-yscale-agent-gke-bootstrap",
+          "rules": [
+            {
+              "api_groups": [
+                "rbac.authorization.k8s.io"
+              ],
+              "resources": [
+                "clusterrolebindings"
+              ],
+              "verbs": [
+                "create",
+                "delete",
+                "get"
+              ]
+            },
+            {
+              "api_groups": [
+                "rbac.authorization.k8s.io"
+              ],
+              "resources": [
+                "clusterroles"
+              ],
+              "resource_names": [
+                "system:node-bootstrapper"
+              ],
+              "verbs": [
+                "bind"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "ClusterRole",
+          "name": "yscale-rbac-audit-yscale-agent-workloads",
+          "rules": [
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "events"
+              ],
+              "verbs": [
+                "create",
+                "patch"
+              ]
+            },
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "pods"
+              ],
+              "verbs": [
+                "delete",
+                "patch"
+              ]
+            },
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "pods",
+                "pods/log"
+              ],
+              "verbs": [
+                "get",
+                "list",
+                "watch"
+              ]
+            },
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "pods/eviction"
+              ],
+              "verbs": [
+                "create"
+              ]
+            },
+            {
+              "api_groups": [
+                "batch"
+              ],
+              "resources": [
+                "jobs"
+              ],
+              "verbs": [
+                "create",
+                "delete",
+                "get",
+                "list",
+                "patch",
+                "watch"
+              ]
+            },
+            {
+              "api_groups": [
+                "yscale.sh"
+              ],
+              "resources": [
+                "workloads",
+                "workloads/status"
+              ],
+              "verbs": [
+                "get",
+                "list",
+                "patch",
+                "update",
+                "watch"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "ClusterRoleBinding",
+          "name": "cilium",
+          "role_ref": {
+            "api_group": "rbac.authorization.k8s.io",
+            "kind": "ClusterRole",
+            "name": "cilium"
+          },
+          "subjects": [
+            {
+              "kind": "ServiceAccount",
+              "name": "cilium",
+              "namespace": "kube-system"
+            }
+          ]
+        },
+        {
+          "kind": "ClusterRoleBinding",
+          "name": "yscale-rbac-audit-yscale-agent-cluster",
+          "role_ref": {
+            "api_group": "rbac.authorization.k8s.io",
+            "kind": "ClusterRole",
+            "name": "yscale-rbac-audit-yscale-agent-cluster"
+          },
+          "subjects": [
+            {
+              "kind": "ServiceAccount",
+              "name": "yscale-rbac-audit-yscale-agent",
+              "namespace": "yscale"
+            }
+          ]
+        },
+        {
+          "kind": "ClusterRoleBinding",
+          "name": "yscale-rbac-audit-yscale-agent-gke-bootstrap",
+          "role_ref": {
+            "api_group": "rbac.authorization.k8s.io",
+            "kind": "ClusterRole",
+            "name": "yscale-rbac-audit-yscale-agent-gke-bootstrap"
+          },
+          "subjects": [
+            {
+              "kind": "ServiceAccount",
+              "name": "yscale-rbac-audit-yscale-agent",
+              "namespace": "yscale"
+            }
+          ]
+        },
+        {
+          "kind": "ClusterRoleBinding",
+          "name": "yscale-rbac-audit-yscale-agent-workloads",
+          "role_ref": {
+            "api_group": "rbac.authorization.k8s.io",
+            "kind": "ClusterRole",
+            "name": "yscale-rbac-audit-yscale-agent-workloads"
+          },
+          "subjects": [
+            {
+              "kind": "ServiceAccount",
+              "name": "yscale-rbac-audit-yscale-agent",
+              "namespace": "yscale"
+            }
+          ]
+        },
+        {
+          "kind": "ClusterRoleBinding",
+          "name": "yscale-rbac-audit-yscale-burst-bootstrappers",
+          "role_ref": {
+            "api_group": "rbac.authorization.k8s.io",
+            "kind": "ClusterRole",
+            "name": "system:node-bootstrapper"
+          },
+          "subjects": [
+            {
+              "api_group": "rbac.authorization.k8s.io",
+              "kind": "Group",
+              "name": "system:bootstrappers:yscale:bursts"
+            }
+          ]
+        },
+        {
+          "kind": "Role",
+          "namespace": "kube-system",
+          "name": "yscale-rbac-audit-yscale-agent-bootstrap",
+          "rules": [
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "secrets"
+              ],
+              "verbs": [
+                "create"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "Role",
+          "namespace": "team-a",
+          "name": "yscale-rbac-audit-yscale-agent-storage-creds",
+          "rules": [
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "secrets"
+              ],
+              "verbs": [
+                "get"
+              ]
+            },
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "secrets"
+              ],
+              "resource_names": [
+                "yscale-runtime-bindings"
+              ],
+              "verbs": [
+                "get",
+                "patch",
+                "update"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "Role",
+          "namespace": "team-b",
+          "name": "yscale-rbac-audit-yscale-agent-storage-creds",
+          "rules": [
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "secrets"
+              ],
+              "verbs": [
+                "get"
+              ]
+            },
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "secrets"
+              ],
+              "resource_names": [
+                "yscale-runtime-bindings"
+              ],
+              "verbs": [
+                "get",
+                "patch",
+                "update"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "Role",
+          "namespace": "yscale",
+          "name": "yscale-rbac-audit-yscale-agent-artifacts",
+          "rules": [
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "pods"
+              ],
+              "verbs": [
+                "list"
+              ]
+            },
+            {
+              "api_groups": [
+                "batch"
+              ],
+              "resources": [
+                "jobs"
+              ],
+              "verbs": [
+                "create",
+                "get"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "Role",
+          "namespace": "yscale",
+          "name": "yscale-rbac-audit-yscale-agent-gateway-routes",
+          "rules": [
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "configmaps"
+              ],
+              "verbs": [
+                "create"
+              ]
+            },
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "configmaps"
+              ],
+              "resource_names": [
+                "yscale-gateway-routes"
+              ],
+              "verbs": [
+                "get",
+                "patch",
+                "update"
+              ]
+            },
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "services"
+              ],
+              "verbs": [
+                "create"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "Role",
+          "namespace": "yscale",
+          "name": "yscale-rbac-audit-yscale-agent-gke-sa",
+          "rules": [
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "serviceaccounts"
+              ],
+              "verbs": [
+                "create",
+                "delete",
+                "get"
+              ]
+            },
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "serviceaccounts/token"
+              ],
+              "verbs": [
+                "create"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "RoleBinding",
+          "namespace": "kube-system",
+          "name": "yscale-rbac-audit-yscale-agent-bootstrap",
+          "role_ref": {
+            "api_group": "rbac.authorization.k8s.io",
+            "kind": "Role",
+            "name": "yscale-rbac-audit-yscale-agent-bootstrap"
+          },
+          "subjects": [
+            {
+              "kind": "ServiceAccount",
+              "name": "yscale-rbac-audit-yscale-agent",
+              "namespace": "yscale"
+            }
+          ]
+        },
+        {
+          "kind": "RoleBinding",
+          "namespace": "team-a",
+          "name": "yscale-rbac-audit-yscale-agent-storage-creds",
+          "role_ref": {
+            "api_group": "rbac.authorization.k8s.io",
+            "kind": "Role",
+            "name": "yscale-rbac-audit-yscale-agent-storage-creds"
+          },
+          "subjects": [
+            {
+              "kind": "ServiceAccount",
+              "name": "yscale-rbac-audit-yscale-agent",
+              "namespace": "yscale"
+            }
+          ]
+        },
+        {
+          "kind": "RoleBinding",
+          "namespace": "team-b",
+          "name": "yscale-rbac-audit-yscale-agent-storage-creds",
+          "role_ref": {
+            "api_group": "rbac.authorization.k8s.io",
+            "kind": "Role",
+            "name": "yscale-rbac-audit-yscale-agent-storage-creds"
+          },
+          "subjects": [
+            {
+              "kind": "ServiceAccount",
+              "name": "yscale-rbac-audit-yscale-agent",
+              "namespace": "yscale"
+            }
+          ]
+        },
+        {
+          "kind": "RoleBinding",
+          "namespace": "yscale",
+          "name": "yscale-rbac-audit-yscale-agent-artifacts",
+          "role_ref": {
+            "api_group": "rbac.authorization.k8s.io",
+            "kind": "Role",
+            "name": "yscale-rbac-audit-yscale-agent-artifacts"
+          },
+          "subjects": [
+            {
+              "kind": "ServiceAccount",
+              "name": "yscale-rbac-audit-yscale-agent",
+              "namespace": "yscale"
+            }
+          ]
+        },
+        {
+          "kind": "RoleBinding",
+          "namespace": "yscale",
+          "name": "yscale-rbac-audit-yscale-agent-gateway-routes",
+          "role_ref": {
+            "api_group": "rbac.authorization.k8s.io",
+            "kind": "Role",
+            "name": "yscale-rbac-audit-yscale-agent-gateway-routes"
+          },
+          "subjects": [
+            {
+              "kind": "ServiceAccount",
+              "name": "yscale-rbac-audit-yscale-agent",
+              "namespace": "yscale"
+            }
+          ]
+        },
+        {
+          "kind": "RoleBinding",
+          "namespace": "yscale",
+          "name": "yscale-rbac-audit-yscale-agent-gke-sa",
+          "role_ref": {
+            "api_group": "rbac.authorization.k8s.io",
+            "kind": "Role",
+            "name": "yscale-rbac-audit-yscale-agent-gke-sa"
+          },
+          "subjects": [
+            {
+              "kind": "ServiceAccount",
+              "name": "yscale-rbac-audit-yscale-agent",
+              "namespace": "yscale"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "cluster-kubernetes-token",
+      "scope": "cluster",
+      "bootstrap_auth_mode": "kubernetes-token",
+      "allowed_namespaces": [
+        "team-a",
+        "team-b"
+      ],
+      "objects": [
+        {
+          "kind": "ClusterRole",
+          "name": "cilium",
+          "rules": [
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "componentstatuses",
+                "endpoints",
+                "namespaces",
+                "nodes",
+                "pods",
+                "services"
+              ],
+              "verbs": [
+                "get",
+                "list",
+                "watch"
+              ]
+            },
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "events"
+              ],
+              "verbs": [
+                "create",
+                "patch",
+                "update"
+              ]
+            },
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "nodes/status"
+              ],
+              "verbs": [
+                "patch"
+              ]
+            },
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "pods",
+                "pods/finalizers"
+              ],
+              "verbs": [
+                "delete",
+                "get",
+                "list",
+                "update",
+                "watch"
+              ]
+            },
+            {
+              "api_groups": [
+                "apiextensions.k8s.io"
+              ],
+              "resources": [
+                "customresourcedefinitions"
+              ],
+              "verbs": [
+                "create",
+                "get",
+                "list",
+                "update",
+                "watch"
+              ]
+            },
+            {
+              "api_groups": [
+                "cilium.io"
+              ],
+              "resources": [
+                "ciliumcidrgroups",
+                "ciliumclusterwideenvoyconfigs",
+                "ciliumclusterwidenetworkpolicies",
+                "ciliumendpoints",
+                "ciliumenvoyconfigs",
+                "ciliumidentities",
+                "ciliuml2announcementpolicies",
+                "ciliumloadbalancerippools",
+                "ciliumlocalredirectpolicies",
+                "ciliumnetworkpolicies",
+                "ciliumnodes",
+                "ciliumpodippools"
+              ],
+              "verbs": [
+                "create",
+                "delete",
+                "get",
+                "list",
+                "patch",
+                "update",
+                "watch"
+              ]
+            },
+            {
+              "api_groups": [
+                "cilium.io"
+              ],
+              "resources": [
+                "ciliumendpoints/status",
+                "ciliumidentities/status",
+                "ciliumnodes/status"
+              ],
+              "verbs": [
+                "patch",
+                "update"
+              ]
+            },
+            {
+              "api_groups": [
+                "coordination.k8s.io"
+              ],
+              "resources": [
+                "leases"
+              ],
+              "verbs": [
+                "create",
+                "get",
+                "list",
+                "update"
+              ]
+            },
+            {
+              "api_groups": [
+                "discovery.k8s.io"
+              ],
+              "resources": [
+                "endpointslices"
+              ],
+              "verbs": [
+                "get",
+                "list",
+                "watch"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "ClusterRole",
+          "name": "yscale-rbac-audit-yscale-agent-cluster",
+          "rules": [
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "namespaces"
+              ],
+              "verbs": [
+                "get",
+                "list"
+              ]
+            },
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "nodes"
+              ],
+              "verbs": [
+                "delete",
+                "get",
+                "list",
+                "patch",
+                "update",
+                "watch"
+              ]
+            },
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "serviceaccounts/token"
+              ],
+              "resource_names": [
+                "cilium"
+              ],
+              "verbs": [
+                "create"
+              ]
+            },
+            {
+              "api_groups": [
+                "certificates.k8s.io"
+              ],
+              "resources": [
+                "certificatesigningrequests"
+              ],
+              "verbs": [
+                "get",
+                "list",
+                "watch"
+              ]
+            },
+            {
+              "api_groups": [
+                "certificates.k8s.io"
+              ],
+              "resources": [
+                "certificatesigningrequests/approval"
+              ],
+              "verbs": [
+                "update"
+              ]
+            },
+            {
+              "api_groups": [
+                "certificates.k8s.io"
+              ],
+              "resources": [
+                "signers"
+              ],
+              "resource_names": [
+                "kubernetes.io/kube-apiserver-client-kubelet",
+                "kubernetes.io/kubelet-serving"
+              ],
+              "verbs": [
+                "approve"
+              ]
+            },
+            {
+              "api_groups": [
+                "networking.k8s.io"
+              ],
+              "resources": [
+                "servicecidrs"
+              ],
+              "verbs": [
+                "get",
+                "list",
+                "watch"
+              ]
+            },
+            {
+              "api_groups": [
+                "yscale.sh"
+              ],
+              "resources": [
+                "workloads"
+              ],
+              "verbs": [
+                "get",
+                "list",
+                "watch"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "ClusterRole",
+          "name": "yscale-rbac-audit-yscale-agent-workloads",
+          "rules": [
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "events"
+              ],
+              "verbs": [
+                "create",
+                "patch"
+              ]
+            },
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "pods"
+              ],
+              "verbs": [
+                "delete",
+                "patch"
+              ]
+            },
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "pods",
+                "pods/log"
+              ],
+              "verbs": [
+                "get",
+                "list",
+                "watch"
+              ]
+            },
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "pods/eviction"
+              ],
+              "verbs": [
+                "create"
+              ]
+            },
+            {
+              "api_groups": [
+                "batch"
+              ],
+              "resources": [
+                "jobs"
+              ],
+              "verbs": [
+                "create",
+                "delete",
+                "get",
+                "list",
+                "patch",
+                "watch"
+              ]
+            },
+            {
+              "api_groups": [
+                "yscale.sh"
+              ],
+              "resources": [
+                "workloads",
+                "workloads/status"
+              ],
+              "verbs": [
+                "get",
+                "list",
+                "patch",
+                "update",
+                "watch"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "ClusterRoleBinding",
+          "name": "cilium",
+          "role_ref": {
+            "api_group": "rbac.authorization.k8s.io",
+            "kind": "ClusterRole",
+            "name": "cilium"
+          },
+          "subjects": [
+            {
+              "kind": "ServiceAccount",
+              "name": "cilium",
+              "namespace": "kube-system"
+            }
+          ]
+        },
+        {
+          "kind": "ClusterRoleBinding",
+          "name": "yscale-rbac-audit-yscale-agent-cluster",
+          "role_ref": {
+            "api_group": "rbac.authorization.k8s.io",
+            "kind": "ClusterRole",
+            "name": "yscale-rbac-audit-yscale-agent-cluster"
+          },
+          "subjects": [
+            {
+              "kind": "ServiceAccount",
+              "name": "yscale-rbac-audit-yscale-agent",
+              "namespace": "yscale"
+            }
+          ]
+        },
+        {
+          "kind": "ClusterRoleBinding",
+          "name": "yscale-rbac-audit-yscale-agent-workloads",
+          "role_ref": {
+            "api_group": "rbac.authorization.k8s.io",
+            "kind": "ClusterRole",
+            "name": "yscale-rbac-audit-yscale-agent-workloads"
+          },
+          "subjects": [
+            {
+              "kind": "ServiceAccount",
+              "name": "yscale-rbac-audit-yscale-agent",
+              "namespace": "yscale"
+            }
+          ]
+        },
+        {
+          "kind": "ClusterRoleBinding",
+          "name": "yscale-rbac-audit-yscale-burst-bootstrappers",
+          "role_ref": {
+            "api_group": "rbac.authorization.k8s.io",
+            "kind": "ClusterRole",
+            "name": "system:node-bootstrapper"
+          },
+          "subjects": [
+            {
+              "api_group": "rbac.authorization.k8s.io",
+              "kind": "Group",
+              "name": "system:bootstrappers:yscale:bursts"
+            }
+          ]
+        },
+        {
+          "kind": "Role",
+          "namespace": "kube-system",
+          "name": "yscale-rbac-audit-yscale-agent-bootstrap",
+          "rules": [
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "secrets"
+              ],
+              "verbs": [
+                "create"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "Role",
+          "namespace": "team-a",
+          "name": "yscale-rbac-audit-yscale-agent-storage-creds",
+          "rules": [
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "secrets"
+              ],
+              "verbs": [
+                "get"
+              ]
+            },
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "secrets"
+              ],
+              "resource_names": [
+                "yscale-runtime-bindings"
+              ],
+              "verbs": [
+                "get",
+                "patch",
+                "update"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "Role",
+          "namespace": "team-b",
+          "name": "yscale-rbac-audit-yscale-agent-storage-creds",
+          "rules": [
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "secrets"
+              ],
+              "verbs": [
+                "get"
+              ]
+            },
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "secrets"
+              ],
+              "resource_names": [
+                "yscale-runtime-bindings"
+              ],
+              "verbs": [
+                "get",
+                "patch",
+                "update"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "Role",
+          "namespace": "yscale",
+          "name": "yscale-rbac-audit-yscale-agent-artifacts",
+          "rules": [
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "pods"
+              ],
+              "verbs": [
+                "list"
+              ]
+            },
+            {
+              "api_groups": [
+                "batch"
+              ],
+              "resources": [
+                "jobs"
+              ],
+              "verbs": [
+                "create",
+                "get"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "Role",
+          "namespace": "yscale",
+          "name": "yscale-rbac-audit-yscale-agent-gateway-routes",
+          "rules": [
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "configmaps"
+              ],
+              "verbs": [
+                "create"
+              ]
+            },
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "configmaps"
+              ],
+              "resource_names": [
+                "yscale-gateway-routes"
+              ],
+              "verbs": [
+                "get",
+                "patch",
+                "update"
+              ]
+            },
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "services"
+              ],
+              "verbs": [
+                "create"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "RoleBinding",
+          "namespace": "kube-system",
+          "name": "yscale-rbac-audit-yscale-agent-bootstrap",
+          "role_ref": {
+            "api_group": "rbac.authorization.k8s.io",
+            "kind": "Role",
+            "name": "yscale-rbac-audit-yscale-agent-bootstrap"
+          },
+          "subjects": [
+            {
+              "kind": "ServiceAccount",
+              "name": "yscale-rbac-audit-yscale-agent",
+              "namespace": "yscale"
+            }
+          ]
+        },
+        {
+          "kind": "RoleBinding",
+          "namespace": "team-a",
+          "name": "yscale-rbac-audit-yscale-agent-storage-creds",
+          "role_ref": {
+            "api_group": "rbac.authorization.k8s.io",
+            "kind": "Role",
+            "name": "yscale-rbac-audit-yscale-agent-storage-creds"
+          },
+          "subjects": [
+            {
+              "kind": "ServiceAccount",
+              "name": "yscale-rbac-audit-yscale-agent",
+              "namespace": "yscale"
+            }
+          ]
+        },
+        {
+          "kind": "RoleBinding",
+          "namespace": "team-b",
+          "name": "yscale-rbac-audit-yscale-agent-storage-creds",
+          "role_ref": {
+            "api_group": "rbac.authorization.k8s.io",
+            "kind": "Role",
+            "name": "yscale-rbac-audit-yscale-agent-storage-creds"
+          },
+          "subjects": [
+            {
+              "kind": "ServiceAccount",
+              "name": "yscale-rbac-audit-yscale-agent",
+              "namespace": "yscale"
+            }
+          ]
+        },
+        {
+          "kind": "RoleBinding",
+          "namespace": "yscale",
+          "name": "yscale-rbac-audit-yscale-agent-artifacts",
+          "role_ref": {
+            "api_group": "rbac.authorization.k8s.io",
+            "kind": "Role",
+            "name": "yscale-rbac-audit-yscale-agent-artifacts"
+          },
+          "subjects": [
+            {
+              "kind": "ServiceAccount",
+              "name": "yscale-rbac-audit-yscale-agent",
+              "namespace": "yscale"
+            }
+          ]
+        },
+        {
+          "kind": "RoleBinding",
+          "namespace": "yscale",
+          "name": "yscale-rbac-audit-yscale-agent-gateway-routes",
+          "role_ref": {
+            "api_group": "rbac.authorization.k8s.io",
+            "kind": "Role",
+            "name": "yscale-rbac-audit-yscale-agent-gateway-routes"
+          },
+          "subjects": [
+            {
+              "kind": "ServiceAccount",
+              "name": "yscale-rbac-audit-yscale-agent",
+              "namespace": "yscale"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "namespaced-gke",
+      "scope": "namespaced",
+      "bootstrap_auth_mode": "gke",
+      "allowed_namespaces": [
+        "team-a",
+        "team-b"
+      ],
+      "objects": [
+        {
+          "kind": "ClusterRole",
+          "name": "cilium",
+          "rules": [
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "componentstatuses",
+                "endpoints",
+                "namespaces",
+                "nodes",
+                "pods",
+                "services"
+              ],
+              "verbs": [
+                "get",
+                "list",
+                "watch"
+              ]
+            },
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "events"
+              ],
+              "verbs": [
+                "create",
+                "patch",
+                "update"
+              ]
+            },
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "nodes/status"
+              ],
+              "verbs": [
+                "patch"
+              ]
+            },
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "pods",
+                "pods/finalizers"
+              ],
+              "verbs": [
+                "delete",
+                "get",
+                "list",
+                "update",
+                "watch"
+              ]
+            },
+            {
+              "api_groups": [
+                "apiextensions.k8s.io"
+              ],
+              "resources": [
+                "customresourcedefinitions"
+              ],
+              "verbs": [
+                "create",
+                "get",
+                "list",
+                "update",
+                "watch"
+              ]
+            },
+            {
+              "api_groups": [
+                "cilium.io"
+              ],
+              "resources": [
+                "ciliumcidrgroups",
+                "ciliumclusterwideenvoyconfigs",
+                "ciliumclusterwidenetworkpolicies",
+                "ciliumendpoints",
+                "ciliumenvoyconfigs",
+                "ciliumidentities",
+                "ciliuml2announcementpolicies",
+                "ciliumloadbalancerippools",
+                "ciliumlocalredirectpolicies",
+                "ciliumnetworkpolicies",
+                "ciliumnodes",
+                "ciliumpodippools"
+              ],
+              "verbs": [
+                "create",
+                "delete",
+                "get",
+                "list",
+                "patch",
+                "update",
+                "watch"
+              ]
+            },
+            {
+              "api_groups": [
+                "cilium.io"
+              ],
+              "resources": [
+                "ciliumendpoints/status",
+                "ciliumidentities/status",
+                "ciliumnodes/status"
+              ],
+              "verbs": [
+                "patch",
+                "update"
+              ]
+            },
+            {
+              "api_groups": [
+                "coordination.k8s.io"
+              ],
+              "resources": [
+                "leases"
+              ],
+              "verbs": [
+                "create",
+                "get",
+                "list",
+                "update"
+              ]
+            },
+            {
+              "api_groups": [
+                "discovery.k8s.io"
+              ],
+              "resources": [
+                "endpointslices"
+              ],
+              "verbs": [
+                "get",
+                "list",
+                "watch"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "ClusterRole",
+          "name": "yscale-rbac-audit-yscale-agent-cluster",
+          "rules": [
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "namespaces"
+              ],
+              "verbs": [
+                "get",
+                "list"
+              ]
+            },
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "nodes"
+              ],
+              "verbs": [
+                "delete",
+                "get",
+                "list",
+                "patch",
+                "update",
+                "watch"
+              ]
+            },
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "serviceaccounts/token"
+              ],
+              "resource_names": [
+                "cilium"
+              ],
+              "verbs": [
+                "create"
+              ]
+            },
+            {
+              "api_groups": [
+                "certificates.k8s.io"
+              ],
+              "resources": [
+                "certificatesigningrequests"
+              ],
+              "verbs": [
+                "get",
+                "list",
+                "watch"
+              ]
+            },
+            {
+              "api_groups": [
+                "certificates.k8s.io"
+              ],
+              "resources": [
+                "certificatesigningrequests/approval"
+              ],
+              "verbs": [
+                "update"
+              ]
+            },
+            {
+              "api_groups": [
+                "certificates.k8s.io"
+              ],
+              "resources": [
+                "signers"
+              ],
+              "resource_names": [
+                "kubernetes.io/kube-apiserver-client-kubelet",
+                "kubernetes.io/kubelet-serving"
+              ],
+              "verbs": [
+                "approve"
+              ]
+            },
+            {
+              "api_groups": [
+                "networking.k8s.io"
+              ],
+              "resources": [
+                "servicecidrs"
+              ],
+              "verbs": [
+                "get",
+                "list",
+                "watch"
+              ]
+            },
+            {
+              "api_groups": [
+                "yscale.sh"
+              ],
+              "resources": [
+                "workloads"
+              ],
+              "verbs": [
+                "get",
+                "list",
+                "watch"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "ClusterRole",
+          "name": "yscale-rbac-audit-yscale-agent-gke-bootstrap",
+          "rules": [
+            {
+              "api_groups": [
+                "rbac.authorization.k8s.io"
+              ],
+              "resources": [
+                "clusterrolebindings"
+              ],
+              "verbs": [
+                "create",
+                "delete",
+                "get"
+              ]
+            },
+            {
+              "api_groups": [
+                "rbac.authorization.k8s.io"
+              ],
+              "resources": [
+                "clusterroles"
+              ],
+              "resource_names": [
+                "system:node-bootstrapper"
+              ],
+              "verbs": [
+                "bind"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "ClusterRoleBinding",
+          "name": "cilium",
+          "role_ref": {
+            "api_group": "rbac.authorization.k8s.io",
+            "kind": "ClusterRole",
+            "name": "cilium"
+          },
+          "subjects": [
+            {
+              "kind": "ServiceAccount",
+              "name": "cilium",
+              "namespace": "kube-system"
+            }
+          ]
+        },
+        {
+          "kind": "ClusterRoleBinding",
+          "name": "yscale-rbac-audit-yscale-agent-cluster",
+          "role_ref": {
+            "api_group": "rbac.authorization.k8s.io",
+            "kind": "ClusterRole",
+            "name": "yscale-rbac-audit-yscale-agent-cluster"
+          },
+          "subjects": [
+            {
+              "kind": "ServiceAccount",
+              "name": "yscale-rbac-audit-yscale-agent",
+              "namespace": "yscale"
+            }
+          ]
+        },
+        {
+          "kind": "ClusterRoleBinding",
+          "name": "yscale-rbac-audit-yscale-agent-gke-bootstrap",
+          "role_ref": {
+            "api_group": "rbac.authorization.k8s.io",
+            "kind": "ClusterRole",
+            "name": "yscale-rbac-audit-yscale-agent-gke-bootstrap"
+          },
+          "subjects": [
+            {
+              "kind": "ServiceAccount",
+              "name": "yscale-rbac-audit-yscale-agent",
+              "namespace": "yscale"
+            }
+          ]
+        },
+        {
+          "kind": "ClusterRoleBinding",
+          "name": "yscale-rbac-audit-yscale-burst-bootstrappers",
+          "role_ref": {
+            "api_group": "rbac.authorization.k8s.io",
+            "kind": "ClusterRole",
+            "name": "system:node-bootstrapper"
+          },
+          "subjects": [
+            {
+              "api_group": "rbac.authorization.k8s.io",
+              "kind": "Group",
+              "name": "system:bootstrappers:yscale:bursts"
+            }
+          ]
+        },
+        {
+          "kind": "Role",
+          "namespace": "kube-system",
+          "name": "yscale-rbac-audit-yscale-agent-bootstrap",
+          "rules": [
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "secrets"
+              ],
+              "verbs": [
+                "create"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "Role",
+          "namespace": "team-a",
+          "name": "yscale-rbac-audit-yscale-agent-storage-creds",
+          "rules": [
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "secrets"
+              ],
+              "verbs": [
+                "get"
+              ]
+            },
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "secrets"
+              ],
+              "resource_names": [
+                "yscale-runtime-bindings"
+              ],
+              "verbs": [
+                "get",
+                "patch",
+                "update"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "Role",
+          "namespace": "team-a",
+          "name": "yscale-rbac-audit-yscale-agent-workloads",
+          "rules": [
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "events"
+              ],
+              "verbs": [
+                "create",
+                "patch"
+              ]
+            },
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "pods"
+              ],
+              "verbs": [
+                "delete",
+                "patch"
+              ]
+            },
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "pods",
+                "pods/log"
+              ],
+              "verbs": [
+                "get",
+                "list",
+                "watch"
+              ]
+            },
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "pods/eviction"
+              ],
+              "verbs": [
+                "create"
+              ]
+            },
+            {
+              "api_groups": [
+                "batch"
+              ],
+              "resources": [
+                "jobs"
+              ],
+              "verbs": [
+                "create",
+                "delete",
+                "get",
+                "list",
+                "patch",
+                "watch"
+              ]
+            },
+            {
+              "api_groups": [
+                "yscale.sh"
+              ],
+              "resources": [
+                "workloads",
+                "workloads/status"
+              ],
+              "verbs": [
+                "get",
+                "list",
+                "patch",
+                "update",
+                "watch"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "Role",
+          "namespace": "team-b",
+          "name": "yscale-rbac-audit-yscale-agent-storage-creds",
+          "rules": [
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "secrets"
+              ],
+              "verbs": [
+                "get"
+              ]
+            },
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "secrets"
+              ],
+              "resource_names": [
+                "yscale-runtime-bindings"
+              ],
+              "verbs": [
+                "get",
+                "patch",
+                "update"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "Role",
+          "namespace": "team-b",
+          "name": "yscale-rbac-audit-yscale-agent-workloads",
+          "rules": [
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "events"
+              ],
+              "verbs": [
+                "create",
+                "patch"
+              ]
+            },
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "pods"
+              ],
+              "verbs": [
+                "delete",
+                "patch"
+              ]
+            },
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "pods",
+                "pods/log"
+              ],
+              "verbs": [
+                "get",
+                "list",
+                "watch"
+              ]
+            },
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "pods/eviction"
+              ],
+              "verbs": [
+                "create"
+              ]
+            },
+            {
+              "api_groups": [
+                "batch"
+              ],
+              "resources": [
+                "jobs"
+              ],
+              "verbs": [
+                "create",
+                "delete",
+                "get",
+                "list",
+                "patch",
+                "watch"
+              ]
+            },
+            {
+              "api_groups": [
+                "yscale.sh"
+              ],
+              "resources": [
+                "workloads",
+                "workloads/status"
+              ],
+              "verbs": [
+                "get",
+                "list",
+                "patch",
+                "update",
+                "watch"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "Role",
+          "namespace": "yscale",
+          "name": "yscale-rbac-audit-yscale-agent-artifacts",
+          "rules": [
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "pods"
+              ],
+              "verbs": [
+                "list"
+              ]
+            },
+            {
+              "api_groups": [
+                "batch"
+              ],
+              "resources": [
+                "jobs"
+              ],
+              "verbs": [
+                "create",
+                "get"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "Role",
+          "namespace": "yscale",
+          "name": "yscale-rbac-audit-yscale-agent-gateway-routes",
+          "rules": [
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "configmaps"
+              ],
+              "verbs": [
+                "create"
+              ]
+            },
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "configmaps"
+              ],
+              "resource_names": [
+                "yscale-gateway-routes"
+              ],
+              "verbs": [
+                "get",
+                "patch",
+                "update"
+              ]
+            },
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "services"
+              ],
+              "verbs": [
+                "create"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "Role",
+          "namespace": "yscale",
+          "name": "yscale-rbac-audit-yscale-agent-gke-sa",
+          "rules": [
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "serviceaccounts"
+              ],
+              "verbs": [
+                "create",
+                "delete",
+                "get"
+              ]
+            },
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "serviceaccounts/token"
+              ],
+              "verbs": [
+                "create"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "RoleBinding",
+          "namespace": "kube-system",
+          "name": "yscale-rbac-audit-yscale-agent-bootstrap",
+          "role_ref": {
+            "api_group": "rbac.authorization.k8s.io",
+            "kind": "Role",
+            "name": "yscale-rbac-audit-yscale-agent-bootstrap"
+          },
+          "subjects": [
+            {
+              "kind": "ServiceAccount",
+              "name": "yscale-rbac-audit-yscale-agent",
+              "namespace": "yscale"
+            }
+          ]
+        },
+        {
+          "kind": "RoleBinding",
+          "namespace": "team-a",
+          "name": "yscale-rbac-audit-yscale-agent-storage-creds",
+          "role_ref": {
+            "api_group": "rbac.authorization.k8s.io",
+            "kind": "Role",
+            "name": "yscale-rbac-audit-yscale-agent-storage-creds"
+          },
+          "subjects": [
+            {
+              "kind": "ServiceAccount",
+              "name": "yscale-rbac-audit-yscale-agent",
+              "namespace": "yscale"
+            }
+          ]
+        },
+        {
+          "kind": "RoleBinding",
+          "namespace": "team-a",
+          "name": "yscale-rbac-audit-yscale-agent-workloads",
+          "role_ref": {
+            "api_group": "rbac.authorization.k8s.io",
+            "kind": "Role",
+            "name": "yscale-rbac-audit-yscale-agent-workloads"
+          },
+          "subjects": [
+            {
+              "kind": "ServiceAccount",
+              "name": "yscale-rbac-audit-yscale-agent",
+              "namespace": "yscale"
+            }
+          ]
+        },
+        {
+          "kind": "RoleBinding",
+          "namespace": "team-b",
+          "name": "yscale-rbac-audit-yscale-agent-storage-creds",
+          "role_ref": {
+            "api_group": "rbac.authorization.k8s.io",
+            "kind": "Role",
+            "name": "yscale-rbac-audit-yscale-agent-storage-creds"
+          },
+          "subjects": [
+            {
+              "kind": "ServiceAccount",
+              "name": "yscale-rbac-audit-yscale-agent",
+              "namespace": "yscale"
+            }
+          ]
+        },
+        {
+          "kind": "RoleBinding",
+          "namespace": "team-b",
+          "name": "yscale-rbac-audit-yscale-agent-workloads",
+          "role_ref": {
+            "api_group": "rbac.authorization.k8s.io",
+            "kind": "Role",
+            "name": "yscale-rbac-audit-yscale-agent-workloads"
+          },
+          "subjects": [
+            {
+              "kind": "ServiceAccount",
+              "name": "yscale-rbac-audit-yscale-agent",
+              "namespace": "yscale"
+            }
+          ]
+        },
+        {
+          "kind": "RoleBinding",
+          "namespace": "yscale",
+          "name": "yscale-rbac-audit-yscale-agent-artifacts",
+          "role_ref": {
+            "api_group": "rbac.authorization.k8s.io",
+            "kind": "Role",
+            "name": "yscale-rbac-audit-yscale-agent-artifacts"
+          },
+          "subjects": [
+            {
+              "kind": "ServiceAccount",
+              "name": "yscale-rbac-audit-yscale-agent",
+              "namespace": "yscale"
+            }
+          ]
+        },
+        {
+          "kind": "RoleBinding",
+          "namespace": "yscale",
+          "name": "yscale-rbac-audit-yscale-agent-gateway-routes",
+          "role_ref": {
+            "api_group": "rbac.authorization.k8s.io",
+            "kind": "Role",
+            "name": "yscale-rbac-audit-yscale-agent-gateway-routes"
+          },
+          "subjects": [
+            {
+              "kind": "ServiceAccount",
+              "name": "yscale-rbac-audit-yscale-agent",
+              "namespace": "yscale"
+            }
+          ]
+        },
+        {
+          "kind": "RoleBinding",
+          "namespace": "yscale",
+          "name": "yscale-rbac-audit-yscale-agent-gke-sa",
+          "role_ref": {
+            "api_group": "rbac.authorization.k8s.io",
+            "kind": "Role",
+            "name": "yscale-rbac-audit-yscale-agent-gke-sa"
+          },
+          "subjects": [
+            {
+              "kind": "ServiceAccount",
+              "name": "yscale-rbac-audit-yscale-agent",
+              "namespace": "yscale"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "namespaced-kubernetes-token",
+      "scope": "namespaced",
+      "bootstrap_auth_mode": "kubernetes-token",
+      "allowed_namespaces": [
+        "team-a",
+        "team-b"
+      ],
+      "objects": [
+        {
+          "kind": "ClusterRole",
+          "name": "cilium",
+          "rules": [
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "componentstatuses",
+                "endpoints",
+                "namespaces",
+                "nodes",
+                "pods",
+                "services"
+              ],
+              "verbs": [
+                "get",
+                "list",
+                "watch"
+              ]
+            },
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "events"
+              ],
+              "verbs": [
+                "create",
+                "patch",
+                "update"
+              ]
+            },
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "nodes/status"
+              ],
+              "verbs": [
+                "patch"
+              ]
+            },
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "pods",
+                "pods/finalizers"
+              ],
+              "verbs": [
+                "delete",
+                "get",
+                "list",
+                "update",
+                "watch"
+              ]
+            },
+            {
+              "api_groups": [
+                "apiextensions.k8s.io"
+              ],
+              "resources": [
+                "customresourcedefinitions"
+              ],
+              "verbs": [
+                "create",
+                "get",
+                "list",
+                "update",
+                "watch"
+              ]
+            },
+            {
+              "api_groups": [
+                "cilium.io"
+              ],
+              "resources": [
+                "ciliumcidrgroups",
+                "ciliumclusterwideenvoyconfigs",
+                "ciliumclusterwidenetworkpolicies",
+                "ciliumendpoints",
+                "ciliumenvoyconfigs",
+                "ciliumidentities",
+                "ciliuml2announcementpolicies",
+                "ciliumloadbalancerippools",
+                "ciliumlocalredirectpolicies",
+                "ciliumnetworkpolicies",
+                "ciliumnodes",
+                "ciliumpodippools"
+              ],
+              "verbs": [
+                "create",
+                "delete",
+                "get",
+                "list",
+                "patch",
+                "update",
+                "watch"
+              ]
+            },
+            {
+              "api_groups": [
+                "cilium.io"
+              ],
+              "resources": [
+                "ciliumendpoints/status",
+                "ciliumidentities/status",
+                "ciliumnodes/status"
+              ],
+              "verbs": [
+                "patch",
+                "update"
+              ]
+            },
+            {
+              "api_groups": [
+                "coordination.k8s.io"
+              ],
+              "resources": [
+                "leases"
+              ],
+              "verbs": [
+                "create",
+                "get",
+                "list",
+                "update"
+              ]
+            },
+            {
+              "api_groups": [
+                "discovery.k8s.io"
+              ],
+              "resources": [
+                "endpointslices"
+              ],
+              "verbs": [
+                "get",
+                "list",
+                "watch"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "ClusterRole",
+          "name": "yscale-rbac-audit-yscale-agent-cluster",
+          "rules": [
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "namespaces"
+              ],
+              "verbs": [
+                "get",
+                "list"
+              ]
+            },
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "nodes"
+              ],
+              "verbs": [
+                "delete",
+                "get",
+                "list",
+                "patch",
+                "update",
+                "watch"
+              ]
+            },
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "serviceaccounts/token"
+              ],
+              "resource_names": [
+                "cilium"
+              ],
+              "verbs": [
+                "create"
+              ]
+            },
+            {
+              "api_groups": [
+                "certificates.k8s.io"
+              ],
+              "resources": [
+                "certificatesigningrequests"
+              ],
+              "verbs": [
+                "get",
+                "list",
+                "watch"
+              ]
+            },
+            {
+              "api_groups": [
+                "certificates.k8s.io"
+              ],
+              "resources": [
+                "certificatesigningrequests/approval"
+              ],
+              "verbs": [
+                "update"
+              ]
+            },
+            {
+              "api_groups": [
+                "certificates.k8s.io"
+              ],
+              "resources": [
+                "signers"
+              ],
+              "resource_names": [
+                "kubernetes.io/kube-apiserver-client-kubelet",
+                "kubernetes.io/kubelet-serving"
+              ],
+              "verbs": [
+                "approve"
+              ]
+            },
+            {
+              "api_groups": [
+                "networking.k8s.io"
+              ],
+              "resources": [
+                "servicecidrs"
+              ],
+              "verbs": [
+                "get",
+                "list",
+                "watch"
+              ]
+            },
+            {
+              "api_groups": [
+                "yscale.sh"
+              ],
+              "resources": [
+                "workloads"
+              ],
+              "verbs": [
+                "get",
+                "list",
+                "watch"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "ClusterRoleBinding",
+          "name": "cilium",
+          "role_ref": {
+            "api_group": "rbac.authorization.k8s.io",
+            "kind": "ClusterRole",
+            "name": "cilium"
+          },
+          "subjects": [
+            {
+              "kind": "ServiceAccount",
+              "name": "cilium",
+              "namespace": "kube-system"
+            }
+          ]
+        },
+        {
+          "kind": "ClusterRoleBinding",
+          "name": "yscale-rbac-audit-yscale-agent-cluster",
+          "role_ref": {
+            "api_group": "rbac.authorization.k8s.io",
+            "kind": "ClusterRole",
+            "name": "yscale-rbac-audit-yscale-agent-cluster"
+          },
+          "subjects": [
+            {
+              "kind": "ServiceAccount",
+              "name": "yscale-rbac-audit-yscale-agent",
+              "namespace": "yscale"
+            }
+          ]
+        },
+        {
+          "kind": "ClusterRoleBinding",
+          "name": "yscale-rbac-audit-yscale-burst-bootstrappers",
+          "role_ref": {
+            "api_group": "rbac.authorization.k8s.io",
+            "kind": "ClusterRole",
+            "name": "system:node-bootstrapper"
+          },
+          "subjects": [
+            {
+              "api_group": "rbac.authorization.k8s.io",
+              "kind": "Group",
+              "name": "system:bootstrappers:yscale:bursts"
+            }
+          ]
+        },
+        {
+          "kind": "Role",
+          "namespace": "kube-system",
+          "name": "yscale-rbac-audit-yscale-agent-bootstrap",
+          "rules": [
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "secrets"
+              ],
+              "verbs": [
+                "create"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "Role",
+          "namespace": "team-a",
+          "name": "yscale-rbac-audit-yscale-agent-storage-creds",
+          "rules": [
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "secrets"
+              ],
+              "verbs": [
+                "get"
+              ]
+            },
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "secrets"
+              ],
+              "resource_names": [
+                "yscale-runtime-bindings"
+              ],
+              "verbs": [
+                "get",
+                "patch",
+                "update"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "Role",
+          "namespace": "team-a",
+          "name": "yscale-rbac-audit-yscale-agent-workloads",
+          "rules": [
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "events"
+              ],
+              "verbs": [
+                "create",
+                "patch"
+              ]
+            },
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "pods"
+              ],
+              "verbs": [
+                "delete",
+                "patch"
+              ]
+            },
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "pods",
+                "pods/log"
+              ],
+              "verbs": [
+                "get",
+                "list",
+                "watch"
+              ]
+            },
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "pods/eviction"
+              ],
+              "verbs": [
+                "create"
+              ]
+            },
+            {
+              "api_groups": [
+                "batch"
+              ],
+              "resources": [
+                "jobs"
+              ],
+              "verbs": [
+                "create",
+                "delete",
+                "get",
+                "list",
+                "patch",
+                "watch"
+              ]
+            },
+            {
+              "api_groups": [
+                "yscale.sh"
+              ],
+              "resources": [
+                "workloads",
+                "workloads/status"
+              ],
+              "verbs": [
+                "get",
+                "list",
+                "patch",
+                "update",
+                "watch"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "Role",
+          "namespace": "team-b",
+          "name": "yscale-rbac-audit-yscale-agent-storage-creds",
+          "rules": [
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "secrets"
+              ],
+              "verbs": [
+                "get"
+              ]
+            },
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "secrets"
+              ],
+              "resource_names": [
+                "yscale-runtime-bindings"
+              ],
+              "verbs": [
+                "get",
+                "patch",
+                "update"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "Role",
+          "namespace": "team-b",
+          "name": "yscale-rbac-audit-yscale-agent-workloads",
+          "rules": [
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "events"
+              ],
+              "verbs": [
+                "create",
+                "patch"
+              ]
+            },
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "pods"
+              ],
+              "verbs": [
+                "delete",
+                "patch"
+              ]
+            },
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "pods",
+                "pods/log"
+              ],
+              "verbs": [
+                "get",
+                "list",
+                "watch"
+              ]
+            },
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "pods/eviction"
+              ],
+              "verbs": [
+                "create"
+              ]
+            },
+            {
+              "api_groups": [
+                "batch"
+              ],
+              "resources": [
+                "jobs"
+              ],
+              "verbs": [
+                "create",
+                "delete",
+                "get",
+                "list",
+                "patch",
+                "watch"
+              ]
+            },
+            {
+              "api_groups": [
+                "yscale.sh"
+              ],
+              "resources": [
+                "workloads",
+                "workloads/status"
+              ],
+              "verbs": [
+                "get",
+                "list",
+                "patch",
+                "update",
+                "watch"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "Role",
+          "namespace": "yscale",
+          "name": "yscale-rbac-audit-yscale-agent-artifacts",
+          "rules": [
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "pods"
+              ],
+              "verbs": [
+                "list"
+              ]
+            },
+            {
+              "api_groups": [
+                "batch"
+              ],
+              "resources": [
+                "jobs"
+              ],
+              "verbs": [
+                "create",
+                "get"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "Role",
+          "namespace": "yscale",
+          "name": "yscale-rbac-audit-yscale-agent-gateway-routes",
+          "rules": [
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "configmaps"
+              ],
+              "verbs": [
+                "create"
+              ]
+            },
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "configmaps"
+              ],
+              "resource_names": [
+                "yscale-gateway-routes"
+              ],
+              "verbs": [
+                "get",
+                "patch",
+                "update"
+              ]
+            },
+            {
+              "api_groups": [
+                ""
+              ],
+              "resources": [
+                "services"
+              ],
+              "verbs": [
+                "create"
+              ]
+            }
+          ]
+        },
+        {
+          "kind": "RoleBinding",
+          "namespace": "kube-system",
+          "name": "yscale-rbac-audit-yscale-agent-bootstrap",
+          "role_ref": {
+            "api_group": "rbac.authorization.k8s.io",
+            "kind": "Role",
+            "name": "yscale-rbac-audit-yscale-agent-bootstrap"
+          },
+          "subjects": [
+            {
+              "kind": "ServiceAccount",
+              "name": "yscale-rbac-audit-yscale-agent",
+              "namespace": "yscale"
+            }
+          ]
+        },
+        {
+          "kind": "RoleBinding",
+          "namespace": "team-a",
+          "name": "yscale-rbac-audit-yscale-agent-storage-creds",
+          "role_ref": {
+            "api_group": "rbac.authorization.k8s.io",
+            "kind": "Role",
+            "name": "yscale-rbac-audit-yscale-agent-storage-creds"
+          },
+          "subjects": [
+            {
+              "kind": "ServiceAccount",
+              "name": "yscale-rbac-audit-yscale-agent",
+              "namespace": "yscale"
+            }
+          ]
+        },
+        {
+          "kind": "RoleBinding",
+          "namespace": "team-a",
+          "name": "yscale-rbac-audit-yscale-agent-workloads",
+          "role_ref": {
+            "api_group": "rbac.authorization.k8s.io",
+            "kind": "Role",
+            "name": "yscale-rbac-audit-yscale-agent-workloads"
+          },
+          "subjects": [
+            {
+              "kind": "ServiceAccount",
+              "name": "yscale-rbac-audit-yscale-agent",
+              "namespace": "yscale"
+            }
+          ]
+        },
+        {
+          "kind": "RoleBinding",
+          "namespace": "team-b",
+          "name": "yscale-rbac-audit-yscale-agent-storage-creds",
+          "role_ref": {
+            "api_group": "rbac.authorization.k8s.io",
+            "kind": "Role",
+            "name": "yscale-rbac-audit-yscale-agent-storage-creds"
+          },
+          "subjects": [
+            {
+              "kind": "ServiceAccount",
+              "name": "yscale-rbac-audit-yscale-agent",
+              "namespace": "yscale"
+            }
+          ]
+        },
+        {
+          "kind": "RoleBinding",
+          "namespace": "team-b",
+          "name": "yscale-rbac-audit-yscale-agent-workloads",
+          "role_ref": {
+            "api_group": "rbac.authorization.k8s.io",
+            "kind": "Role",
+            "name": "yscale-rbac-audit-yscale-agent-workloads"
+          },
+          "subjects": [
+            {
+              "kind": "ServiceAccount",
+              "name": "yscale-rbac-audit-yscale-agent",
+              "namespace": "yscale"
+            }
+          ]
+        },
+        {
+          "kind": "RoleBinding",
+          "namespace": "yscale",
+          "name": "yscale-rbac-audit-yscale-agent-artifacts",
+          "role_ref": {
+            "api_group": "rbac.authorization.k8s.io",
+            "kind": "Role",
+            "name": "yscale-rbac-audit-yscale-agent-artifacts"
+          },
+          "subjects": [
+            {
+              "kind": "ServiceAccount",
+              "name": "yscale-rbac-audit-yscale-agent",
+              "namespace": "yscale"
+            }
+          ]
+        },
+        {
+          "kind": "RoleBinding",
+          "namespace": "yscale",
+          "name": "yscale-rbac-audit-yscale-agent-gateway-routes",
+          "role_ref": {
+            "api_group": "rbac.authorization.k8s.io",
+            "kind": "Role",
+            "name": "yscale-rbac-audit-yscale-agent-gateway-routes"
+          },
+          "subjects": [
+            {
+              "kind": "ServiceAccount",
+              "name": "yscale-rbac-audit-yscale-agent",
+              "namespace": "yscale"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

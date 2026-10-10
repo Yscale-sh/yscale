@@ -1,0 +1,68 @@
+# POC: GitHub Actions runners that ONLY land on yscale Fly bursts.
+#
+# The integration is three fields on the pod template:
+#   - nodeSelector  yscale.sh/burst-node=true   (only runs on bursts)
+#   - toleration    yscale.sh/burst-node=true   (tolerates the burst taint)
+#   - annotation    yscale.sh/burst-template    (tells yscale how to size)
+#
+# Backend is NOT pinned here — yscale.yaml already has backend.type: flyio,
+# so all bursts go to Fly. When more backends are wired the decider picks.
+#
+# Opt in from a workflow:
+#   jobs:
+#     build:
+#       runs-on: [self-hosted, yscale-fly]
+apiVersion: actions.summerwind.dev/v1alpha1
+kind: RunnerDeployment
+metadata:
+  name: anyrent-yscale-fly-runners
+  namespace: github
+spec:
+  replicas: 1
+  template:
+    metadata:
+      annotations:
+        # Sizing for the Fly burst. The runner's actual request is 2 CPU /
+        # 3 Gi — "medium" (2 CPU / 4 Gi) fits with kubelet overhead.
+        yscale.sh/burst-template: |
+          size: medium
+    spec:
+      organization: AnyRentCloud
+      # ARC's stock runner image, MIRRORED to registry.fly.io so the burst
+      # pulls at Fly internal-network speed (~700ms) instead of waiting
+      # minutes for Docker Hub. Mirror was pushed once via:
+      #   docker pull --platform linux/amd64 summerwind/actions-runner:latest
+      #   docker tag ... registry.fly.io/yscale-burst-image:runner-latest
+      #   docker push registry.fly.io/yscale-burst-image:runner-latest
+      image: registry.fly.io/yscale-burst-image:runner-latest
+      imagePullSecrets:
+        - name: fly-registry
+      labels:
+        - self-hosted
+        - linux
+        - x64
+        - yscale-fly       # workflows opt in by adding this label
+      env:
+        - name: RUNNER_FEATURE_FLAG_EPHEMERAL
+          value: "true"
+        - name: ACTIONS_RUNNER_REQUIRE_JOB_CONTAINER
+          value: "false"
+        - name: RUNNER_WORKDIR
+          value: /runner/_work
+      resources:
+        requests: { cpu: "1",   memory: 2Gi }
+        limits:   { cpu: "2",   memory: 3Gi }
+      # The whole yscale integration:
+      nodeSelector:
+        yscale.sh/burst-node: "true"
+      tolerations:
+        - key: yscale.sh/burst-node
+          operator: Equal
+          value: "true"
+          effect: NoSchedule
+      volumeMounts:
+        - mountPath: /runner/_work
+          name: work
+      volumes:
+        - emptyDir: { sizeLimit: 4Gi }
+          name: work

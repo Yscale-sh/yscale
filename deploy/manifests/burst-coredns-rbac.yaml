@@ -1,0 +1,34 @@
+# Cluster-wide read on Services/Endpoints/EndpointSlices for all kubelet
+# nodes (system:nodes group) so the in-burst CoreDNS can resolve
+# *.svc.cluster.local using the kubelet's own kubeconfig.
+#
+# POC scope: simplest possible plumbing. The kubelet kubeconfig already
+# exists on the burst, no extra credential flow needed. Trade-off: this
+# broadens read on services/endpoints to every node in the cluster,
+# including the homelab nodes. Acceptable because services/endpoints
+# are not secret resources. Tighten later by minting a dedicated
+# coredns ServiceAccount per burst from the agent.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: yscale-burst-coredns
+rules:
+  - apiGroups: [""]
+    resources: ["services", "endpoints", "namespaces"]
+    verbs: ["list", "watch", "get"]
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["list", "watch", "get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: yscale-burst-coredns
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: yscale-burst-coredns
+subjects:
+  - kind: Group
+    name: system:nodes
+    apiGroup: rbac.authorization.k8s.io

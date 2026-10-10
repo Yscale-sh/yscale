@@ -1,0 +1,43 @@
+# Mesh-probe burst on Fly — runs iperf3 -s on 5201 so the gateway pod
+# can run iperf3 -c against it from inside the customer cluster. Sized
+# with explicit pod resources because the Fly nano machine (1 vCPU /
+# 2 GiB) is shared with kubelet + cilium-agent + node-exporter.
+#
+# Pair with meshprobe-linode.yaml + meshprobe-aws.yaml + run all three
+# at once for a Fly↔Linode↔AWS bandwidth matrix. Tier=full so the burst
+# pod gets a Cilium pod IP routable from the gateway over the tailnet.
+#
+# Submit:
+#   curl -fsS -X POST -H "Content-Type: application/json" \
+#     "http://yscale-cloud:8443/v1/workloads" \
+#     --data-binary @test/cases/meshprobe-flyio.yaml
+apiVersion: yscale.sh/v1
+kind: Workload
+metadata:
+  name: meshprobe-flyio
+spec:
+  # Public Docker Hub image — pulled by burst's host network on all
+  # backends. iperf3 is the ENTRYPOINT; we override with /bin/sh -c so
+  # we can log a marker line before serving.
+  image: docker.io/networkstatic/iperf3:latest
+  backend: flyio
+  # Small pod (1:1 pinning unnecessary when we submit one workload at a
+  # time — the matrix is run sequentially per provider so the single
+  # burst that exists is always the right one).
+  cpu: "200m"
+  memory: "256Mi"
+  networking:
+    tier: full
+  command: ["/bin/sh", "-c"]
+  args:
+    - |
+      echo "[meshprobe-flyio] starting iperf3 -s on $(hostname) at $(date -u)"
+      # -1: exit after first client disconnect (good with retries:0)
+      # but for matrix we want to serve multiple clients — stay alive
+      # until the gateway pod is done, then this pod gets reaped on
+      # workload completion (we'll kill it externally).
+      exec iperf3 -s -p 5201
+  retries: 0
+  budget:
+    maxUSD: 0.10
+    deadline: 20m

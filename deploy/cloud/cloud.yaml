@@ -1,0 +1,127 @@
+# In-cluster yscale-cloud (central server). For the smoke test this
+# runs in the same cluster as the agent — the agent reaches it via
+# the in-cluster Service DNS at http://yscale-cloud.yscale:8443.
+#
+# In production this would run separately (own cluster / VM / Fly
+# Machines) and customers' agents would dial it over the public
+# internet. The smoke-test topology is "everything in one cluster"
+# purely to keep the moving parts small.
+#
+# Requires:
+#  1. Namespace `yscale` exists (kubectl create namespace yscale)
+#  2. Secret `yscale-cloud-secrets` exists with FLYIO_TOKEN +
+#     TS_OAUTH_CLIENT_ID + TS_OAUTH_CLIENT_SECRET + TS_TAILNET
+#     (created from .env via scripts/seed-cloud-secrets.sh)
+#
+#     It also carries YSCALE_PLACEMENT_TOKEN_KEY, the HMAC key central signs
+#     placement-preview launch tokens with. It rides in the Secret rather
+#     than being generated per-process because it must be the SAME key on
+#     every replica and across restarts — a preview answered here is
+#     launched against whichever replica takes the submission. Unset just
+#     disables preview launch binding (previews still answer, but hand out
+#     no token and a launch presenting one is refused); set-but-weak (under
+#     32 bytes) is fatal at boot.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: yscale-cloud
+  namespace: yscale
+  labels:
+    app.kubernetes.io/name: yscale-cloud
+spec:
+  replicas: 1
+  # State is durable in Postgres (DATABASE_URL) now, so a restart no longer
+  # loses it. Kept at replicas:1 + Recreate because reads still serve from a
+  # per-replica in-memory cache (write-through to PG) — two replicas' caches
+  # would drift. Multi-replica needs PG to become the read source of truth.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: yscale-cloud
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: yscale-cloud
+    spec:
+      containers:
+        - name: yscale-cloud
+          image: ghcr.io/yscale-sh/yscale-cloud:v0.0.1-preview
+          imagePullPolicy: Always
+          args: ["-listen=:8443"]
+          ports:
+            - { name: https, containerPort: 8443, protocol: TCP }
+          envFrom:
+            - secretRef:
+                name: yscale-cloud-secrets
+          env:
+            - { name: FLY_ORG, value: "personal" } # override via secret if needed
+            # Durable state (Postgres) + durable teardown queue (Redis), from
+            # the dev datastores in deploy/cloud/dev-datastores.yaml. Remove
+            # these to fall back to in-memory state + inline teardown.
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef: { name: yscale-datastore-dev, key: DATABASE_URL }
+            - name: REDIS_URL
+              valueFrom:
+                secretKeyRef: { name: yscale-datastore-dev, key: REDIS_URL }
+            # Global safety-net: the reaper watchdog reaps ANY burst older than
+            # this, regardless of per-workload spec.budget.deadline. Backstop
+            # against a hung node (esp. a 2x rtx6000 at $3/hr) billing forever
+            # if a workload is submitted without a deadline. Per-workload
+            # deadline still applies as fine control. 0/unset = disabled.
+            - { name: YSCALE_BURST_MAX_LIFETIME, value: "90m" }
+            # GCP burst backend. Unlike every other backend's credential, a
+            # service-account key is a FILE — the SDK takes a path, not a
+            # value, so it cannot ride in yscale-cloud-secrets with the rest.
+            # Application Default Credentials are no fallback here: central
+            # runs on k3s, so there is no GCE metadata server to fall back to.
+            # The decider constructs the backend only when GCP_PROJECT_ID is
+            # set, so leaving these unset just keeps GCP disabled.
+            - { name: GOOGLE_APPLICATION_CREDENTIALS, value: "/var/secrets/gcp/key.json" }
+            # Operators must set their project ID (e.g. "your-gcp-project") to enable GCP.
+            - { name: GCP_PROJECT_ID, value: "" }
+            - { name: GCP_REGION, value: "us-central1" }
+          volumeMounts:
+            - name: gcp-sa
+              mountPath: /var/secrets/gcp
+              readOnly: true
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits:   { memory: 256Mi }
+          # Probes are very tolerant — this cluster has slow CNI/iptables
+          # and tight default probes cause spurious restarts.
+          readinessProbe:
+            httpGet: { path: /healthz, port: 8443 }
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 30
+            initialDelaySeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz, port: 8443 }
+            periodSeconds: 60
+            timeoutSeconds: 10
+            failureThreshold: 6
+      volumes:
+        # optional: absent Secret leaves the mount empty rather than wedging
+        # the pod in ContainerCreating, so a cluster without GCP configured
+        # still starts. GCP_PROJECT_ID above is what actually enables the
+        # backend; a missing key surfaces as an auth error on first burst.
+        - name: gcp-sa
+          secret:
+            secretName: yscale-gcp-sa
+            optional: true
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: yscale-cloud
+  namespace: yscale
+  labels:
+    app.kubernetes.io/name: yscale-cloud
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: yscale-cloud
+  ports:
+    - { name: https, port: 8443, targetPort: 8443, protocol: TCP }

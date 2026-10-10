@@ -1,0 +1,463 @@
+{{- include "yscale-agent.validateRBAC" . -}}
+{{- if .Values.rbac.create -}}
+{{- $sa := include "yscale-agent.serviceAccountName" . -}}
+{{- $relNS := .Release.Namespace -}}
+
+{{/*
+Cluster-wide reads that don't depend on rbac.scope: nodes, namespaces,
+and CSR approval. The agent watches nodes for NodeEvents, validates
+incoming CreateJob namespaces against the allowlist, and approves
+kubelet bootstrap CSRs from system:bootstrappers:yscale:bursts.
+*/}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ printf "%s-yscale-agent-cluster" .Release.Name | trunc 63 | trimSuffix "-" }}
+  labels:
+    {{- include "yscale-agent.labels" . | nindent 4 }}
+rules:
+  # delete: burst teardown removes the Node object after the backing
+  # VM is destroyed (k8s won't garbage-collect it without a cloud
+  # provider, so it would linger NotReady forever).
+  - apiGroups: [""]
+    resources: [nodes]
+    verbs: [get, list, watch, update, patch, delete]
+  - apiGroups: [""]
+    resources: [namespaces]
+    verbs: [get, list]
+  - apiGroups: [networking.k8s.io]
+    resources: [servicecidrs]
+    verbs: [get, list, watch]
+  # Workload CRs are watched cluster-wide so the agent can see new
+  # submissions in any allowed namespace. Per-namespace authorization
+  # is enforced via the workloads/status RoleBinding below.
+  - apiGroups: [yscale.sh]
+    resources: [workloads]
+    verbs: [get, list, watch]
+  - apiGroups: [certificates.k8s.io]
+    resources: [certificatesigningrequests]
+    verbs: [get, list, watch]
+  - apiGroups: [certificates.k8s.io]
+    resources: [certificatesigningrequests/approval]
+    verbs: [update]
+  # Approver permissions for kubelet client + serving CSRs from the
+  # yscale bursts group only. Without this, kubelet stays in pending
+  # state forever after first bootstrap.
+  - apiGroups: [certificates.k8s.io]
+    resources: [signers]
+    resourceNames:
+      - kubernetes.io/kube-apiserver-client-kubelet
+      - kubernetes.io/kubelet-serving
+    verbs: [approve]
+  # Mint a short-lived JWT for the cilium ServiceAccount in kube-system.
+  # The agent ships this token to each burst as part of the bootstrap
+  # response so cilium-agent can run as a host process (not a pod) with
+  # full K8s integration — no container, no snapshotter unpack issue.
+  # Scoped to ONLY the cilium SA via resourceNames so the agent can't
+  # mint tokens for arbitrary SAs.
+  - apiGroups: [""]
+    resources: [serviceaccounts/token]
+    resourceNames: [cilium]
+    verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ printf "%s-yscale-agent-cluster" .Release.Name | trunc 63 | trimSuffix "-" }}
+  labels:
+    {{- include "yscale-agent.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ printf "%s-yscale-agent-cluster" .Release.Name | trunc 63 | trimSuffix "-" }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $sa }}
+    namespace: {{ $relNS }}
+
+{{/*
+Gateway route detection/publishing is scoped to the agent's own namespace:
+the Service CIDR dry-run probe creates a Service with DryRun=All here, and
+the agent updates only the yscale-gateway-routes ConfigMap consumed by the
+gateway Deployment.
+*/}}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ printf "%s-yscale-agent-gateway-routes" .Release.Name | trunc 63 | trimSuffix "-" }}
+  namespace: {{ $relNS }}
+  labels:
+    {{- include "yscale-agent.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [services]
+    verbs: [create]
+  - apiGroups: [""]
+    resources: [configmaps]
+    verbs: [create]
+  - apiGroups: [""]
+    resources: [configmaps]
+    resourceNames: [yscale-gateway-routes]
+    verbs: [get, update, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ printf "%s-yscale-agent-gateway-routes" .Release.Name | trunc 63 | trimSuffix "-" }}
+  namespace: {{ $relNS }}
+  labels:
+    {{- include "yscale-agent.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ printf "%s-yscale-agent-gateway-routes" .Release.Name | trunc 63 | trimSuffix "-" }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $sa }}
+    namespace: {{ $relNS }}
+
+{{/*
+Burst kubelet bootstrap path: bind `system:bootstrappers:yscale:bursts`
+(our auth-extra-group on every minted bootstrap-token Secret) to the
+built-in `system:node-bootstrapper` ClusterRole so kubelets on burst
+nodes can POST their initial CSR. The agent's CSR approver then
+auto-approves it. Without this binding kubelet exits with
+"cannot create resource certificatesigningrequests".
+*/}}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ printf "%s-yscale-burst-bootstrappers" .Release.Name | trunc 63 | trimSuffix "-" }}
+  labels:
+    {{- include "yscale-agent.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:node-bootstrapper
+subjects:
+  - kind: Group
+    apiGroup: rbac.authorization.k8s.io
+    name: system:bootstrappers:yscale:bursts
+
+{{/*
+Bootstrap-token Secret create permission: scoped to kube-system. The
+BootstrapServer mints these per burst-node bring-up. Always
+namespaced even when rbac.scope == cluster.
+
+`create` and nothing else. createBootstrapTokenSecret is the only code
+that touches a Secret here, it only ever Creates, and the tokens expire
+themselves (the `expiration` field the apiserver's bootstrap-token
+controller enforces) so nothing needs to read or delete them back. A
+`get`/`list` here would let the same path read every Secret in
+kube-system — service-account tokens, the cluster's own credentials —
+which is a strictly larger grant than the namespaced storage-credential
+read below that SECURITY-REVIEW.md H2 is about.
+*/}}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ printf "%s-yscale-agent-bootstrap" .Release.Name | trunc 63 | trimSuffix "-" }}
+  namespace: kube-system
+  labels:
+    {{- include "yscale-agent.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ printf "%s-yscale-agent-bootstrap" .Release.Name | trunc 63 | trimSuffix "-" }}
+  namespace: kube-system
+  labels:
+    {{- include "yscale-agent.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ printf "%s-yscale-agent-bootstrap" .Release.Name | trunc 63 | trimSuffix "-" }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $sa }}
+    namespace: {{ $relNS }}
+
+{{- if eq .Values.bootstrap.authMode "gke" }}
+{{/*
+GKE bootstrap mode: the agent creates per-burst ServiceAccounts in its own
+release namespace (not kube-system, which would let it mint tokens for
+unrelated privileged SAs). Per-burst ClusterRoleBindings to
+system:node-bootstrapper are cluster-scoped. The bind verb on the
+system:node-bootstrapper ClusterRole is required by Kubernetes RBAC
+privilege-escalation prevention: without it, creating a CRB to that role
+is rejected. get on clusterrolebindings is required for fail-closed
+collision verification on AlreadyExists.
+*/}}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ printf "%s-yscale-agent-gke-sa" .Release.Name | trunc 63 | trimSuffix "-" }}
+  namespace: {{ $relNS }}
+  labels:
+    {{- include "yscale-agent.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [serviceaccounts]
+    verbs: [get, create, delete]
+  - apiGroups: [""]
+    resources: [serviceaccounts/token]
+    verbs: [create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ printf "%s-yscale-agent-gke-sa" .Release.Name | trunc 63 | trimSuffix "-" }}
+  namespace: {{ $relNS }}
+  labels:
+    {{- include "yscale-agent.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ printf "%s-yscale-agent-gke-sa" .Release.Name | trunc 63 | trimSuffix "-" }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $sa }}
+    namespace: {{ $relNS }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ printf "%s-yscale-agent-gke-bootstrap" .Release.Name | trunc 63 | trimSuffix "-" }}
+  labels:
+    {{- include "yscale-agent.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [clusterrolebindings]
+    verbs: [get, create, delete]
+  - apiGroups: [rbac.authorization.k8s.io]
+    resources: [clusterroles]
+    resourceNames: [system:node-bootstrapper]
+    verbs: [bind]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ printf "%s-yscale-agent-gke-bootstrap" .Release.Name | trunc 63 | trimSuffix "-" }}
+  labels:
+    {{- include "yscale-agent.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ printf "%s-yscale-agent-gke-bootstrap" .Release.Name | trunc 63 | trimSuffix "-" }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $sa }}
+    namespace: {{ $relNS }}
+{{- end }}
+
+{{/*
+Post-run artifact upload Jobs live in the connector namespace so they can pull
+the exact connector image with the connector's existing registry secret. That
+namespace is the release's own, not a workload namespace, so nothing in
+rbac.allowedNamespaces reaches it and the uploader's own pods have to be
+granted here.
+
+Deliberately narrower than workload management: get and create on the Job,
+`list` and nothing else on Pods, and no Secret access at all. The connector
+lists the uploader Job's pods by label to read the termination summary its
+receipt counts come from — it never creates, patches, evicts or deletes one,
+and `get`/`watch` buy nothing that one labelled list doesn't already answer.
+*/}}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ printf "%s-yscale-agent-artifacts" .Release.Name | trunc 63 | trimSuffix "-" }}
+  namespace: {{ $relNS }}
+  labels:
+    {{- include "yscale-agent.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [batch]
+    resources: [jobs]
+    verbs: [get, create]
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ printf "%s-yscale-agent-artifacts" .Release.Name | trunc 63 | trimSuffix "-" }}
+  namespace: {{ $relNS }}
+  labels:
+    {{- include "yscale-agent.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ printf "%s-yscale-agent-artifacts" .Release.Name | trunc 63 | trimSuffix "-" }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $sa }}
+    namespace: {{ $relNS }}
+
+{{/*
+Storage-credentials Secret reads: `get` only, and only in the namespaces
+named in rbac.allowedNamespaces. This is the second gate behind central's
+namespace authorization — central refuses a submission into a namespace the
+tenant isn't authorized for, and if that gate is ever wrong the API server
+still refuses the read here.
+
+Deliberately NOT widened by rbac.scope=cluster: a cluster-wide Secret grant
+would let one compromised path read every Secret in the cluster, which is the
+whole exposure SECURITY-REVIEW.md H2 is about. A cluster-scope install that
+uses storage therefore still has to list its workload namespaces here.
+
+`list`/`watch` are absent on purpose: the signer looks up one Secret by name.
+*/}}
+{{- range $ns := .Values.rbac.allowedNamespaces }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: yscale-runtime-bindings
+  namespace: {{ $ns }}
+  labels:
+    {{- include "yscale-agent.labels" $ | nindent 4 }}
+    yscale.sh/runtime-bindings: "true"
+type: Opaque
+data: {}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ printf "%s-yscale-agent-storage-creds" $.Release.Name | trunc 63 | trimSuffix "-" }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "yscale-agent.labels" $ | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [get]
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: [yscale-runtime-bindings]
+    verbs: [get, update, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ printf "%s-yscale-agent-storage-creds" $.Release.Name | trunc 63 | trimSuffix "-" }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "yscale-agent.labels" $ | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ printf "%s-yscale-agent-storage-creds" $.Release.Name | trunc 63 | trimSuffix "-" }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $sa }}
+    namespace: {{ $relNS }}
+{{- end }}
+
+{{- if eq .Values.rbac.scope "cluster" }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ printf "%s-yscale-agent-workloads" .Release.Name | trunc 63 | trimSuffix "-" }}
+  labels:
+    {{- include "yscale-agent.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [batch]
+    resources: [jobs]
+    verbs: [get, list, watch, create, delete, patch]
+  - apiGroups: [""]
+    resources: [pods, pods/log]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [delete, patch]
+  - apiGroups: [""]
+    resources: [pods/eviction]
+    verbs: [create]
+  - apiGroups: [""]
+    resources: [events]
+    verbs: [create, patch]
+  - apiGroups: [yscale.sh]
+    resources: [workloads, workloads/status]
+    verbs: [get, list, watch, update, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ printf "%s-yscale-agent-workloads" .Release.Name | trunc 63 | trimSuffix "-" }}
+  labels:
+    {{- include "yscale-agent.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ printf "%s-yscale-agent-workloads" .Release.Name | trunc 63 | trimSuffix "-" }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $sa }}
+    namespace: {{ $relNS }}
+{{- else }}
+{{- range $ns := .Values.rbac.allowedNamespaces }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ printf "%s-yscale-agent-workloads" $.Release.Name | trunc 63 | trimSuffix "-" }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "yscale-agent.labels" $ | nindent 4 }}
+rules:
+  - apiGroups: [batch]
+    resources: [jobs]
+    verbs: [get, list, watch, create, delete, patch]
+  - apiGroups: [""]
+    resources: [pods, pods/log]
+    verbs: [get, list, watch]
+  # Node drain: the eviction call is PDB-aware and is what runs normally,
+  # but a PDB that still blocks at the drain deadline falls back to a direct
+  # Pod delete. Both live here rather than in a ClusterRole — a
+  # connector pinned to one workload namespace drains only that namespace,
+  # and cluster-wide pod delete is a strictly larger grant than it needs.
+  # Patch: pending-pod watcher labels the triggering pod with the workload-id
+  # so the scheduling watcher can observe it regardless of owner kind.
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [delete, patch]
+  - apiGroups: [""]
+    resources: [pods/eviction]
+    verbs: [create]
+  - apiGroups: [""]
+    resources: [events]
+    verbs: [create, patch]
+  - apiGroups: [yscale.sh]
+    resources: [workloads, workloads/status]
+    verbs: [get, list, watch, update, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ printf "%s-yscale-agent-workloads" $.Release.Name | trunc 63 | trimSuffix "-" }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "yscale-agent.labels" $ | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ printf "%s-yscale-agent-workloads" $.Release.Name | trunc 63 | trimSuffix "-" }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $sa }}
+    namespace: {{ $relNS }}
+{{- end }}
+{{- end }}
+
+{{- end -}}

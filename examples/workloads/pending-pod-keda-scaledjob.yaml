@@ -1,0 +1,76 @@
+# Pending-pod burst trigger via a KEDA ScaledJob.
+#
+# KEDA creates Jobs (and therefore pods) from the jobTargetRef template.
+# The burst contract is entirely on the pod template — KEDA does not need
+# to know about yscale. When the pod lands Pending with:
+#   1. nodeSelector: yscale.sh/burst-node=true
+#   2. annotation:   yscale.sh/burst-template (YAML-encoded burst shape)
+#
+# the PendingPodWatcher submits a nodeOnly Workload to central. Once the
+# burst node joins, the KEDA-created pod schedules onto it.
+#
+# Prerequisites:
+#   - KEDA operator installed (https://keda.sh/docs/deploy/)
+#   - A trigger source (this example uses a Prometheus query)
+#
+# Use:
+#   kubectl apply -f examples/workloads/pending-pod-keda-scaledjob.yaml
+#
+# Watch with:
+#   kubectl -n default get pods -l app=burst-etl -w
+#   kubectl -n default get scaledjobs -w
+apiVersion: keda.sh/v1alpha1
+kind: ScaledJob
+metadata:
+  name: burst-etl
+  namespace: default
+spec:
+  jobTargetRef:
+    parallelism: 1
+    completions: 1
+    backoffLimit: 2
+    template:
+      metadata:
+        labels:
+          app: burst-etl
+        annotations:
+          yscale.sh/burst-template: |
+            gpu:
+              kind: l4
+              count: 1
+            size: small
+            budget:
+              maxUSD: 2.00
+              deadline: 30m
+      spec:
+        nodeSelector:
+          yscale.sh/burst-node: "true"
+        tolerations:
+          - key: yscale.sh/burst-node
+            operator: Exists
+            effect: NoSchedule
+        containers:
+          - name: etl
+            image: nvcr.io/nvidia/cuda:12.4.1-base-ubuntu22.04
+            command: ["/bin/sh", "-c"]
+            args:
+              - |
+                echo "[etl] GPU available:"
+                nvidia-smi
+                echo "[etl] running GPU ETL batch"
+                sleep 30
+                echo "[etl] done"
+            resources:
+              limits:
+                nvidia.com/gpu: "1"
+        restartPolicy: Never
+  pollingInterval: 30
+  minReplicaCount: 0
+  maxReplicaCount: 5
+  triggers:
+    - type: prometheus
+      metadata:
+        serverAddress: http://prometheus.monitoring:9090
+        metricName: queue_depth
+        query: sum(queue_messages_ready{queue="gpu-etl"})
+        threshold: "1"

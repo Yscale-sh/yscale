@@ -1,0 +1,36 @@
+# Smallest possible end-to-end test:
+# A container that prints, sleeps long enough for us to watch a burst node
+# come up, then exits. No GPU, no storage, no env — just verifies the
+# Workload -> Job -> burst-node -> schedule -> run path works.
+#
+# Use:
+#   yscale apply --dry-run -f examples/workloads/hello.yaml   # see the translated Job
+#   yscale apply -f examples/workloads/hello.yaml             # actually submit
+#
+# Watch with:
+#   kubectl -n default get jobs,pods -l yscale.sh/workload=hello -w
+#   kubectl -n kube-system logs -l app.kubernetes.io/name=yscale -f
+apiVersion: yscale.sh/v1
+kind: Workload
+metadata:
+  name: hello
+  namespace: default
+spec:
+  image: docker.io/library/busybox:1.36
+  size: nano
+  command: ["/bin/sh", "-c"]
+  args:
+    - |
+      echo "[hello] running on node $(hostname) at $(date -u)"
+      echo "[hello] sleeping 60s so you can watch the burst node settle"
+      sleep 60
+      echo "[hello] done"
+  retries: 0
+  budget:
+    maxUSD: 0.10
+    deadline: 5m
+  # networking.tier defaults to "full" when omitted, and full is the only
+  # supported value: host-mode Cilium giving real cross-cluster pod-to-pod +
+  # ClusterIP + NetworkPolicy via the gateway sidecar. It costs ~2-3 min
+  # extra boot (BPF compile) on top of base node bring-up. The removed
+  # "lite" fast-boot tier is refused during workload admission.

@@ -1,0 +1,51 @@
+# Joined-CNI THROUGHPUT test: measure real burst-pod -> target-cluster
+# bandwidth across the tailnet underlay. The burst runs on a Fly machine
+# (Fly datacenter); the target is your Prometheus /federate endpoint,
+# which must return more than 1 MiB. Replace the documentation-only IP
+# below with its Service ClusterIP. This measures throughput through:
+#   burst pod -> Cilium eBPF (ClusterIP xlate) -> tailnet WG underlay
+#   -> gateway pod (target cluster) -> prometheus pod.
+#
+# Not a pass/fail threshold (cluster uplink varies) — it asserts the
+# transfer COMPLETES (a real body, not 000/timeout) and prints the
+# measured Mbps so we have a number. A stall/timeout fails the case.
+apiVersion: yscale.sh/v1
+kind: Workload
+metadata:
+  name: flyio-full-speedtest
+spec:
+  image: curlimages/curl:8.10.1
+  backend: flyio
+  cpu: "200m"
+  memory: "256Mi"
+  networking:
+    tier: full
+  command: ["/bin/sh", "-c"]
+  args:
+    - |
+      set -u
+      URL='http://192.0.2.10:9090/federate?match[]=%7B__name__%3D~%22.%2B%22%7D'
+      echo "[speedtest] downloading $URL"
+      # -w gives size + time + curl's own speed estimate (bytes/sec).
+      OUT=$(curl -s -o /dev/null --max-time 120 \
+        -w 'bytes=%{size_download} sec=%{time_total} bps=%{speed_download} code=%{http_code}' \
+        "$URL" || echo 'bytes=0 sec=0 bps=0 code=000')
+      echo "[speedtest] raw: $OUT"
+      BYTES=$(echo "$OUT" | sed -n 's/.*bytes=\([0-9]*\).*/\1/p')
+      BPS=$(echo "$OUT"   | sed -n 's/.*bps=\([0-9.]*\).*/\1/p')
+      CODE=$(echo "$OUT"  | sed -n 's/.*code=\([0-9]*\).*/\1/p')
+      # bytes/sec -> Mbps (x8 / 1e6). awk for float math.
+      MBPS=$(awk -v b="${BPS:-0}" 'BEGIN{printf "%.2f", b*8/1000000}')
+      MB=$(awk -v b="${BYTES:-0}" 'BEGIN{printf "%.1f", b/1048576}')
+      echo "[speedtest] transferred ${MB} MiB at ${MBPS} Mbps (http ${CODE})"
+      # Pass: got a real body (>1 MiB) and a real HTTP code (not 000).
+      if [ "${CODE}" != "000" ] && [ "${BYTES:-0}" -gt 1048576 ]; then
+        echo "[speedtest] MARKER-OK throughput ${MBPS} Mbps over tailnet"
+        exit 0
+      fi
+      echo "[speedtest] FAILED transfer incomplete (code=${CODE} bytes=${BYTES})"
+      exit 1
+  retries: 0
+  budget:
+    maxUSD: 0.10
+    deadline: 15m

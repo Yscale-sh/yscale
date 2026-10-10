@@ -1,0 +1,42 @@
+# syntax=docker/dockerfile:1.7
+
+# Cross-compiles on the build platform, so a multi-arch build needs no emulation.
+FROM --platform=$BUILDPLATFORM golang:1.25.0-alpine AS build
+WORKDIR /src
+ENV CGO_ENABLED=0 \
+    GOMAXPROCS=1
+ARG TARGETOS
+ARG TARGETARCH
+ENV GOOS=${TARGETOS} \
+    GOARCH=${TARGETARCH}
+
+COPY go.mod go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
+
+COPY . .
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    go build -p=1 -trimpath -ldflags="-s -w" \
+        -o /yscale-cloud ./central/cmd/yscale-cloud
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    go build -p=1 -trimpath -ldflags="-s -w" \
+        -o /yscale-billing-migrate ./central/cmd/yscale-billing-migrate
+# The lifecycle migrator holds the DDL the runtime process refuses to hold. It
+# ships in the SAME image so a Job and the Deployment it gates run the exact
+# same build — a migrator from another image is a schema the runtime may not
+# recognise, and the runtime fails closed rather than accepting deletes it
+# cannot record.
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    go build -p=1 -trimpath -ldflags="-s -w" \
+        -o /yscale-lifecycle-migrate ./central/cmd/yscale-lifecycle-migrate
+
+FROM alpine:3.21
+RUN apk add --no-cache ca-certificates
+COPY --from=build /yscale-cloud /usr/local/bin/yscale-cloud
+COPY --from=build /yscale-billing-migrate /usr/local/bin/yscale-billing-migrate
+COPY --from=build /yscale-lifecycle-migrate /usr/local/bin/yscale-lifecycle-migrate
+EXPOSE 8443
+ENTRYPOINT ["/usr/local/bin/yscale-cloud"]

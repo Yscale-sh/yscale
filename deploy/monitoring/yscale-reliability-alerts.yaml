@@ -1,0 +1,232 @@
+# Reliability alert rules for yscale central.
+#
+# Picked up by the kube-prometheus-stack PrometheusRule CRD selector
+# (label `release: grafana` in the `monitoring` namespace — matches the
+# existing ServiceMonitor). All queries target the metrics that central's
+# /metrics endpoint exposes and the cost ServiceMonitor already scrapes.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: yscale-reliability
+  namespace: monitoring
+  labels:
+    release: grafana
+spec:
+  groups:
+    - name: yscale.reliability
+      interval: 60s
+      rules:
+
+        # A burst is stuck in provisioning when it has been provisioning for
+        # more than 6 minutes without reaching its success boundary: workload
+        # /started for managed bursts, or Node Ready for nodeOnly bursts.
+        #
+        # This reads LIVE evidence — yscale_burst_provisioning_oldest_age_seconds,
+        # derived by central at scrape time from durable provider-create state
+        # plus the authoritative burst/workload view (the in-memory set in OSS).
+        # It replaces a p95 over yscale_burst_provision_seconds, which measures
+        # COMPLETED starts and so cannot see the failure being alerted on: a
+        # burst that never
+        # starts never produces an observation, leaving the quantile healthy —
+        # or absent entirely — exactly when provisioning is most broken.
+        #
+        # max() collapses replicas, which each publish the same authoritative
+        # set, so the threshold keeps its "the oldest stuck burst" meaning
+        # however many centrals are scraped. The series is ABSENT when central
+        # could not read that view, which is what BurstProvisioningVisibilityLost
+        # below is for — this rule must never be the thing that decides a blind
+        # control plane is healthy. Fire after 10 minutes, as before.
+        - alert: BurstStuckProvisioning
+          expr: |
+            max(yscale_burst_provisioning_oldest_age_seconds) > 360
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Burst stuck provisioning for more than 6 minutes"
+            description: >-
+              A burst has been provisioning for over 6 minutes without its
+              workload reporting started (or its nodeOnly Node becoming Ready).
+              Check backend (Fly/Linode/AWS) node-boot latency and Cluster
+              Connector connectivity.
+
+        # The fail-closed companion. Central publishes source_up 0 — and omits
+        # the count and age entirely — when it cannot read the authoritative
+        # lifecycle or state/workload view, so BurstStuckProvisioning goes quiet
+        # precisely when it is blind. Without this rule that blindness would
+        # look like health.
+        - alert: BurstProvisioningVisibilityLost
+          expr: |
+            min(yscale_burst_provisioning_source_up) == 0
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Live burst provisioning view unreadable"
+            description: >-
+              The Yscale Control Plane has failed to read the authoritative
+              lifecycle or state/workload view for 10 minutes, so
+              BurstStuckProvisioning cannot see a stuck burst. Check Postgres
+              reachability from central.
+
+        # A failed state write means one of two things: a fail-closed API
+        # returned 503 without publishing the mutation, or an explicitly
+        # best-effort operational observation exists only in this replica and
+        # may be replayed after restart. Both require immediate investigation;
+        # the bounded labels identify the entity and operation without IDs,
+        # error strings, or credential material.
+        - alert: StatePersistenceFailures
+          expr: |
+            sum(increase(yscale_state_persistence_failures_total[15m])) > 0
+          for: 0m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Yscale state persistence failures detected"
+            description: >-
+              One or more Yscale state write-throughs failed in the last 15
+              minutes. Fail-closed mutations returned an error; best-effort
+              operational observations may be replayed after restart. Check
+              PostgreSQL reachability and central logs before retrying work.
+
+        # Paid admission is tied to this same signal. A ledger/materialization
+        # difference, a failed query, a stale worker, or loss of the health
+        # series while the managed worker is enabled therefore pages while the
+        # control plane remains fail closed.
+        - alert: BillingReconciliationUnhealthy
+          expr: |
+            max(yscale_billing_reconciliation_enabled) == 1
+            and
+            (min(yscale_billing_reconciliation_healthy) == 0
+             or absent(yscale_billing_reconciliation_healthy))
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Billing ledger reconciliation is unhealthy"
+            description: >-
+              Billing materializations no longer reconcile with the append-only
+              ledger, the reconciliation query failed or became stale, or its
+              health metric disappeared. Paid burst admission is closed. Inspect
+              the bounded difference metrics and central logs; do not rewrite
+              balances automatically.
+
+        # Any reap failure is actionable: it means a cloud VM was NOT torn
+        # down and may be accumulating cost. Fire immediately (no `for:`).
+        - alert: ReapFailures
+          expr: |
+            increase(yscale_reap_total{result="fail"}[15m]) > 0
+          for: 0m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Burst teardown failures detected"
+            description: >
+              One or more burst reaps failed in the last 15 minutes.
+              The backend VM may still be running and accruing cost.
+              Check central logs for 'burst teardown failed; re-queued for retry'.
+
+        # More than 3 coordination-server→Tailscale fallbacks in 10 minutes
+        # indicates the per-customer coordination server is degraded.
+        - alert: MeshFallbackSpike
+          expr: |
+            increase(yscale_mesh_fallback_total[10m]) > 3
+          for: 0m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Mesh auth-key mint falling back to shared Tailscale SaaS repeatedly"
+            description: >
+              More than 3 per-customer coordination-server mints fell back to
+              shared Tailscale SaaS in the last 10 minutes. Check the health
+              of the customer's coordination server and central logs for
+              mesh-fallback / box-unreachable events.
+
+        # Less than 20 free /24 slots (out of 241) means the pool is ~92%
+        # full — new bursts will start failing to get a pod CIDR. The meter
+        # starts at -1 until its first successful state refresh; exclude that
+        # sentinel so an unknown value is not reported as pool exhaustion.
+        - alert: PodCIDRPoolExhaustion
+          expr: |
+            yscale_podcidr_pool_free >= 0 and yscale_podcidr_pool_free < 20
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Pod CIDR pool nearly exhausted (< 20 free /24 slots)"
+            description: >
+              Fewer than 20 /24 pod-CIDR slots remain in the burst pool
+              (10.244.10-250.0/24). New workloads will be rejected when the
+              pool is fully exhausted. Investigate whether any bursts have
+              not been reaped and are leaking CIDR reservations.
+
+        # More than 1% of requests returning 5xx for 5 minutes indicates a
+        # systemic central error (panic, dependency outage, or misconfiguration).
+        - alert: APIErrorRate
+          expr: |
+            sum(rate(yscale_http_requests_total{status=~"5.."}[5m]))
+            /
+            sum(rate(yscale_http_requests_total[5m]))
+            > 0.01
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Central API 5xx error rate > 1%"
+            description: >
+              More than 1% of yscale central HTTP requests are returning 5xx
+              responses over the last 5 minutes. Check central logs and
+              dependencies (Postgres, Redis, Tailscale API).
+
+        # No Cluster Connectors connected for 5 minutes means no workloads can
+        # be dispatched (central rejects the submission with 503).
+        - alert: AgentDisconnected
+          expr: |
+            yscale_agents_connected < 1
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "No Cluster Connectors connected to the Yscale Control Plane"
+            description: >
+              No Cluster Connectors have been connected for 5 minutes.
+              Workload submissions will fail with 503 until a Connector reconnects.
+              Check the yscale-agent Deployment in the customer cluster(s).
+
+        # The scheduled lifecycle test is an actual create -> Node Ready ->
+        # pod logs -> reap transaction. One failure is worth investigation;
+        # the separate failure-review CronJob asks remediation for a proposal
+        # only after two consecutive failures.
+        - alert: YscaleSyntheticLifecycleFailed
+          expr: |
+            max(kube_job_status_failed{
+              namespace="yscale",
+              job_name=~"yscale-smoke-test-.*"
+            }) > 0
+          for: 0m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Scheduled Fly lifecycle smoke failed"
+            description: >
+              The cost-capped Fly synthetic failed before completing create,
+              Node Ready, pod output, and reap. Inspect the retained Job logs
+              and correlate with Control Plane/Cluster Connector logs in Loki.
+
+        # Schedule is every 6h. A 7h threshold catches a suspended CronJob,
+        # controller outage, or a run that never reached terminal success.
+        - alert: YscaleSyntheticLifecycleStale
+          expr: |
+            time() - kube_cronjob_status_last_successful_time{
+              namespace="yscale",
+              cronjob="yscale-smoke-test"
+            } > 25200
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "No successful Fly lifecycle smoke in 7 hours"
+            description: >
+              Verify the yscale-smoke-test CronJob is scheduled and that its
+              ServiceAccount can reach the apiserver, Control Plane, and
+              Cluster Connector.

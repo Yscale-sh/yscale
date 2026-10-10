@@ -1,0 +1,57 @@
+# Pending-pod burst trigger via an Argo Workflow.
+#
+# Argo creates pods from each template's podSpecPatch / container spec.
+# The burst contract is entirely on the pod template — Argo does not need
+# to know about yscale. When the pod lands Pending with:
+#   1. nodeSelector: yscale.sh/burst-node=true
+#   2. annotation:   yscale.sh/burst-template (YAML-encoded burst shape)
+#
+# the PendingPodWatcher submits a nodeOnly Workload to central. Once the
+# burst node joins, the Argo pod schedules onto it and the step proceeds.
+#
+# Use:
+#   argo submit examples/workloads/pending-pod-argo-workflow.yaml
+#
+# Watch with:
+#   argo watch @latest
+#   kubectl -n default get pods -l workflows.argoproj.io/workflow -w
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  generateName: burst-train-
+  namespace: default
+spec:
+  entrypoint: gpu-train
+  templates:
+    - name: gpu-train
+      metadata:
+        labels:
+          app: burst-train
+        annotations:
+          yscale.sh/burst-template: |
+            gpu:
+              kind: l4
+              count: 1
+            size: small
+            budget:
+              maxUSD: 3.00
+              deadline: 45m
+      nodeSelector:
+        yscale.sh/burst-node: "true"
+      tolerations:
+        - key: yscale.sh/burst-node
+          operator: Exists
+          effect: NoSchedule
+      container:
+        image: nvcr.io/nvidia/cuda:12.4.1-base-ubuntu22.04
+        command: ["/bin/sh", "-c"]
+        args:
+          - |
+            echo "[train] GPU available:"
+            nvidia-smi
+            echo "[train] running training job"
+            sleep 60
+            echo "[train] done"
+        resources:
+          limits:
+            nvidia.com/gpu: "1"

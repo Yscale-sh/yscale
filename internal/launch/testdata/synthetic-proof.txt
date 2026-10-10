@@ -1,0 +1,3 @@
+SYNTHETIC LAUNCH EVIDENCE FIXTURE.
+This file is test-only proof material for the synthetic manifest fixture.
+It certifies nothing about any real release, deployment, or customer readiness.

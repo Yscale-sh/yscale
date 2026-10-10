@@ -1,0 +1,18 @@
+# Minimal nodeOnly burst used by survive-test.sh to probe whether the current
+# (managed) cluster's CCM reaps yscale burst nodes.
+#   nodeOnly  = just provision the node, no Job — we only care about the Node's survival.
+#   backend   = which provider the burst comes FROM. This sets the providerID PREFIX
+#               the customer cluster's CCM sees (linode:// vs aws:// ...), which is the
+#               whole variable under test. Test the backend you actually plan to burst.
+#   budget.deadline = safety cap; central's reaper watchdog cleans up if anything hangs.
+apiVersion: yscale.sh/v1
+kind: Workload
+metadata:
+  name: survive-probe
+  namespace: __NS__
+spec:
+  nodeOnly: true
+  backend: __BACKEND__
+  size: small
+  budget:
+    deadline: 30m

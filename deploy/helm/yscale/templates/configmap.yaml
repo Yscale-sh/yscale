@@ -1,0 +1,39 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "yscale.configMapName" . }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "yscale.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    backend:
+      type: {{ .Values.config.backend.type | quote }}
+      flyio:
+        org: {{ .Values.config.backend.flyio.org | quote }}
+        region: {{ .Values.config.backend.flyio.region | quote }}
+        agentImage: {{ .Values.config.backend.flyio.agentImage | quote }}
+    join:
+      mode: {{ .Values.config.join.mode | quote }}
+      k3sServerURL: {{ .Values.config.join.k3sServerURL | quote }}
+      apiServer: {{ .Values.config.join.apiServer | quote }}
+      clusterCA: {{ .Values.config.join.clusterCA | quote }}
+    tailscale:
+      enabled: {{ .Values.config.tailscale.enabled }}
+      tailnet: {{ .Values.config.tailscale.tailnet | quote }}
+      tagPrefix: {{ .Values.config.tailscale.tagPrefix | quote }}
+    scaling:
+      maxNodes: {{ .Values.config.scaling.maxNodes }}
+      scaleDownDelay: {{ .Values.config.scaling.scaleDownDelay | quote }}
+      pollInterval: {{ .Values.config.scaling.pollInterval | quote }}
+      pendingThreshold: {{ .Values.config.scaling.pendingThreshold | quote }}
+      nodeReadyTimeout: {{ .Values.config.scaling.nodeReadyTimeout | quote }}
+      prewarmPool: {{ .Values.config.scaling.prewarmPool }}
+      maxConcurrentProvisions: {{ .Values.config.scaling.maxConcurrentProvisions }}
+      nodeResources:
+        cpuMillis: {{ .Values.config.scaling.nodeResources.cpuMillis }}
+        memoryMB: {{ .Values.config.scaling.nodeResources.memoryMB }}
+    cluster:
+      podCIDR: {{ .Values.config.cluster.podCIDR | quote }}
+      serviceCIDR: {{ .Values.config.cluster.serviceCIDR | quote }}
+      coreDNSIP: {{ .Values.config.cluster.coreDNSIP | quote }}

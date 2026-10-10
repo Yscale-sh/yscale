@@ -1,0 +1,25 @@
+# Fly burst on the FULL networking tier — host-mode Cilium baked in
+# (cilium-agent binary in rootfs, no DaemonSet, no containerd image
+# pull). Full is the only supported tier (the fast-boot lite tier has
+# been removed and is refused during workload admission); Cilium
+# compiles its BPF programs and allocates identities through the CRD
+# path at boot, so cross-cluster pod-to-pod + Cilium NetworkPolicy work.
+apiVersion: yscale.sh/v1
+kind: Workload
+metadata:
+  name: flyio-full
+spec:
+  image: docker.io/library/busybox:1.36
+  backend: flyio
+  size: nano
+  networking:
+    tier: full
+  command: ["/bin/sh", "-c"]
+  args:
+    - |
+      echo "[smoke-full] running on $(hostname) at $(date -u)"
+      echo "[smoke-full] MARKER-OK"
+  retries: 0
+  budget:
+    maxUSD: 0.05
+    deadline: 15m

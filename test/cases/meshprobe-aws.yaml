@@ -1,0 +1,26 @@
+# Mesh-probe burst on AWS (EC2, us-east-1, baked AMI). Pair with the
+# Fly + Linode variants. AWS bursts boot ~65s from the baked AMI; expect
+# longer time-to-pod-ready than Fly (90-120s) once Cilium identity
+# allocation lands. Tier=full so the burst pod gets a Cilium pod IP
+# routable from the gateway over the tailnet.
+apiVersion: yscale.sh/v1
+kind: Workload
+metadata:
+  name: meshprobe-aws
+spec:
+  image: docker.io/networkstatic/iperf3:latest
+  backend: aws
+  # See meshprobe-flyio for sequential-submission rationale.
+  cpu: "200m"
+  memory: "256Mi"
+  networking:
+    tier: full
+  command: ["/bin/sh", "-c"]
+  args:
+    - |
+      echo "[meshprobe-aws] starting iperf3 -s on $(hostname) at $(date -u)"
+      exec iperf3 -s -p 5201
+  retries: 0
+  budget:
+    maxUSD: 0.20
+    deadline: 20m

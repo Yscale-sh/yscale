@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "manifest_id": "stale-bound-commit-fixture",
+  "synthetic": true,
+  "release": {
+    "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "tested_head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "tree": "cccccccccccccccccccccccccccccccccccccccc"
+  },
+  "gates": [
+    {
+      "id": "release-commit",
+      "required": true,
+      "status": "proven",
+      "bound_commit": "dddddddddddddddddddddddddddddddddddddddd",
+      "evidence": [
+        {
+          "type": "local-file",
+          "path": "internal/launch/testdata/synthetic-proof.txt",
+          "sha256": "db3115857858e8eb66482d6074e874f9ebd97889b58e8a9c011acab5b32ce5bc",
+          "note": "valid file, stale binding"
+        }
+      ]
+    }
+  ],
+  "supported_cells": []
+}

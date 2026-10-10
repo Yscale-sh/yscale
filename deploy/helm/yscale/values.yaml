@@ -1,0 +1,66 @@
+image:
+  repository: ghcr.io/jakenesler/yscale-controller
+  tag: latest
+  # Optional immutable pin. When non-empty this takes precedence over `tag`
+  # and the controller is deployed by content digest as
+  # `repository@sha256:<64 lowercase hex>`. Leave empty for local/dev
+  # tag-based deploys. A malformed value fails rendering even in dev.
+  digest: ""
+  # Production immutability switch. When true, rendering fails unless a valid
+  # `digest` is supplied — refuses to ship a mutable tag reference. Keep false
+  # for local/dev so the tag fallback stays usable.
+  requireDigest: false
+  pullPolicy: IfNotPresent
+
+namespace: kube-system
+
+config:
+  backend:
+    type: flyio
+    flyio:
+      org: ""
+      region: ord
+      agentImage: ""
+  join:
+    mode: k3s
+    k3sServerURL: ""
+    apiServer: ""
+    clusterCA: ""
+  tailscale:
+    enabled: true
+    tailnet: ""
+    tagPrefix: yscale-burst
+  scaling:
+    maxNodes: 10
+    scaleDownDelay: 5m
+    pollInterval: 10s
+    pendingThreshold: 10s
+    nodeReadyTimeout: 2m
+    prewarmPool: 0 # Fly requires 0 in this release; positive values fail closed.
+    maxConcurrentProvisions: 1
+    nodeResources:
+      cpuMillis: 2000
+      memoryMB: 4096
+  cluster:
+    podCIDR: "10.42.0.0/16"
+    serviceCIDR: "10.43.0.0/16"
+    coreDNSIP: "10.43.0.10"
+
+secrets:
+  flyioToken: ""
+  tsAuthKey: ""
+  k3sToken: ""
+  # When set, an existing Secret with this name is used (must contain
+  # FLYIO_TOKEN, TS_AUTHKEY, K3S_TOKEN keys) and no Secret is created.
+  existingSecret: ""
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    memory: 256Mi
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

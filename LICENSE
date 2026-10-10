@@ -1,0 +1,118 @@
+# Yscale Community License 1.0
+
+> This is a custom source-available license, not an OSI-approved open-source license.
+
+## Purpose
+
+This license lets you use, run, and modify this software for yourself or for
+your organization's internal use, free of license fees regardless of revenue
+or organization size. Reselling the software or providing its functionality
+to third parties as a hosted or managed service requires a separate paid
+license from the licensor.
+
+## Acceptance
+
+By using the software, you agree to all of the terms below.
+
+## Copyright License
+
+The licensor grants you a copyright license to use, copy, modify, and run the
+software, and to distribute unmodified or modified copies **for no charge**,
+in each case subject to the limitations below.
+
+## Free Use
+
+Subject to the restrictions below, no license fee is required for:
+
+1. **Personal use.** You are an individual using the software for personal,
+   educational, research, or hobby purposes, including a homelab.
+2. **Internal organization use.** Your organization uses the software for its
+   own clusters, workloads, development, testing, research or production
+   operations. There is no revenue threshold, organization-size limit or
+   evaluation time limit for these uses.
+3. **Internal evaluation.** You evaluate or develop the software internally,
+   including to assess a future resale or hosted-service offering. Making
+   such an offering available to third parties still requires the paid
+   license described below.
+
+Running your own applications or business services on capacity provisioned
+by the software remains internal use, even when those applications have
+paying customers, provided you do not offer the software itself, its burst
+management functionality or brokered compute capacity to those customers.
+
+Free use refers to license fees, not infrastructure costs. You remain
+responsible for cloud-provider charges and operating your deployment.
+
+## Paid License Required for Resale or Third-Party Hosting
+
+Without a separate paid written license from the licensor expressly
+authorizing the activity, you may not:
+
+1. Sell, rent, lease, or sublicense the software itself, or charge others for
+   copies of it, including modified versions or copies bundled with another
+   product or service.
+2. Offer the software, or a service whose primary value is the software's
+   functionality, to third parties as a hosted, managed, or
+   software-as-a-service offering (including offering compute capacity
+   brokered by the software to customers who are not part of your own
+   organization), whether charged for separately, bundled or offered free
+   of charge.
+
+These restrictions apply to the software and modified versions of it. They
+do not prohibit distributing copies without charge under this license's
+terms. See `COMMERCIAL.md` for how to request a paid agreement. Its permitted
+activities, pricing and other terms must be agreed in writing; contacting
+the licensor or making a payment alone does not grant these rights.
+
+## Notices
+
+You must ensure that anyone who gets a copy of any part of the software from
+you also gets a copy of this license text. Preserve copyright and other
+attribution notices. Third-party components retain their respective licenses;
+this license does not replace or restrict rights granted under those licenses.
+
+## Changes and New Versions
+
+The licensor may publish new versions of this license. You may continue to
+use software you received under this version's terms.
+
+## Patents
+
+The licensor grants you a license, under any patent claims the licensor can
+license or becomes able to license, to make, have made, use, and run the
+software, subject to the same conditions and limitations as the copyright
+license above. This patent license ends immediately if you or your company
+make any written claim that the software infringes a patent.
+
+## No Other Rights
+
+These terms do not allow any use beyond what they expressly permit. They do
+not grant any right in the licensor's trademarks or trade names.
+
+## Termination
+
+If you use the software in violation of these terms, your license ends
+immediately. If the licensor notifies you of a violation and you cure it
+within 30 days of the notice, your license is reinstated retroactively;
+a second violation ends your license permanently.
+
+## Disclaimer
+
+**As far as the law allows, the software comes AS IS, without any warranty or
+condition, and the licensor will not be liable to you for any damages arising
+out of these terms or the use or nature of the software, under any kind of
+legal claim.**
+
+## Definitions
+
+- The **licensor** is the copyright holder of this software: Jake Nesler.
+- The **software** is the software the licensor makes available under these
+  terms, including any portion of it, to the extent the licensor has the
+  right to license it. Separately licensed third-party components are excluded.
+- **You** refers to the individual or organization agreeing to these terms.
+- **Your organization** is any legal entity, sole proprietorship, or other
+  kind of organization that you work for, plus all its affiliates.
+- **Affiliates** means entities that control, are controlled by, or are under
+  common control with an organization.
+- **Use** means anything you do with the software requiring one of the
+  licenses above.

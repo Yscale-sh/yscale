@@ -1,0 +1,125 @@
+# Dev datastores for yscale-cloud (central): a Postgres for durable state
+# (replaces the old JSON snapshot) and a Redis for the durable teardown queue.
+#
+# DEV / BURNER: single replica, modest storage. NOT for production data — use a
+# managed/HA datastore there.
+# Redis uses emptyDir (truly ephemeral): a dev Redis restart drops in-flight
+# teardown jobs, which is acceptable for a pilot/dev environment.
+#
+# This file ships no credentials. Create the Secret first, with a password
+# generated on your machine (never commit it):
+#
+#   pw=$(openssl rand -hex 24)
+#   kubectl -n yscale create secret generic yscale-datastore-dev \
+#     --from-literal=POSTGRES_PASSWORD="$pw" \
+#     --from-literal=DATABASE_URL="postgres://yscale:$pw@postgres-dev.yscale:5432/yscale?sslmode=disable" \
+#     --from-literal=REDIS_URL=redis://redis-dev.yscale:6379/0
+#   unset pw
+#
+# Then apply:  kubectl apply -f deploy/cloud/dev-datastores.yaml
+# Central is wired to these via DATABASE_URL / REDIS_URL in deploy/cloud/cloud.yaml.
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-dev
+  namespace: yscale
+  labels: { app.kubernetes.io/name: postgres-dev, yscale.sh/dev: "true" }
+spec:
+  selector: { app.kubernetes.io/name: postgres-dev }
+  ports:
+    - { name: postgres, port: 5432, targetPort: 5432 }
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres-dev
+  namespace: yscale
+  labels: { app.kubernetes.io/name: postgres-dev, yscale.sh/dev: "true" }
+spec:
+  serviceName: postgres-dev
+  replicas: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: postgres-dev }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: postgres-dev, yscale.sh/dev: "true" }
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          ports:
+            - { name: postgres, containerPort: 5432 }
+          env:
+            - { name: POSTGRES_DB, value: yscale }
+            - { name: POSTGRES_USER, value: yscale }
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: yscale-datastore-dev, key: POSTGRES_PASSWORD }
+            # Keep PGDATA in a subdir so the mounted volume root (lost+found) doesn't trip initdb.
+            - { name: PGDATA, value: /var/lib/postgresql/data/pgdata }
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { memory: 512Mi }
+          readinessProbe:
+            exec: { command: ["pg_isready", "-U", "yscale", "-d", "yscale"] }
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 12
+          volumeMounts:
+            - { name: data, mountPath: /var/lib/postgresql/data }
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels: { yscale.sh/dev: "true" }
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests: { storage: 2Gi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-dev
+  namespace: yscale
+  labels: { app.kubernetes.io/name: redis-dev, yscale.sh/dev: "true" }
+spec:
+  selector: { app.kubernetes.io/name: redis-dev }
+  ports:
+    - { name: redis, port: 6379, targetPort: 6379 }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis-dev
+  namespace: yscale
+  labels: { app.kubernetes.io/name: redis-dev, yscale.sh/dev: "true" }
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app.kubernetes.io/name: redis-dev }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: redis-dev, yscale.sh/dev: "true" }
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          args: ["--save", "", "--appendonly", "no"] # dev: in-memory only (burner)
+          ports:
+            - { name: redis, containerPort: 6379 }
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits: { memory: 256Mi }
+          readinessProbe:
+            exec: { command: ["redis-cli", "ping"] }
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+          volumeMounts:
+            - { name: data, mountPath: /data }
+      volumes:
+        - name: data
+          emptyDir: {}

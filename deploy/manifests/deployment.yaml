@@ -1,0 +1,78 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: yscale
+  namespace: kube-system
+  labels:
+    app: yscale
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: yscale
+  template:
+    metadata:
+      labels:
+        app: yscale
+    spec:
+      serviceAccountName: yscale
+      containers:
+        - name: yscale
+          image: ghcr.io/jakenesler/yscale-controller:latest
+          args:
+            - -config
+            - /etc/yscale/config.yaml
+          envFrom:
+            - secretRef:
+                name: yscale-secrets
+          volumeMounts:
+            - name: config
+              mountPath: /etc/yscale
+              readOnly: true
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+      volumes:
+        - name: config
+          configMap:
+            name: yscale-config
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: yscale-config
+  namespace: kube-system
+data:
+  config.yaml: |
+    backend:
+      type: flyio
+      flyio:
+        org: personal
+        region: ord
+    tailscale:
+      enabled: true
+      tailnet: ""
+      tagPrefix: yscale-burst
+    scaling:
+      maxBurstPods: 50
+      podTTLSeconds: 3600
+      reconcileInterval: 5s
+      schedulingMode: explicit
+    cluster:
+      podCIDR: "10.42.0.0/16"
+      serviceCIDR: "10.43.0.0/16"
+      coreDNSIP: "10.43.0.10"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: yscale-secrets
+  namespace: kube-system
+type: Opaque
+stringData:
+  FLYIO_TOKEN: ""
+  TS_AUTHKEY: ""

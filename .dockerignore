@@ -1,0 +1,44 @@
+# Keep the Docker build context small. Excludes everything that
+# isn't needed inside the image — most of these are also git-ignored
+# but Docker contexts don't respect .gitignore by default.
+.git
+.gitignore
+.github
+
+# Cartogopher / IDE / build state
+.claude
+bakes
+cartogopher.db
+.idea
+.vscode
+
+# Local artifacts. Note: bin/ is intentionally NOT excluded — the
+# image Dockerfiles `COPY bin/yscale-*-linux-amd64` (cross-compiled
+# on the host) rather than rebuilding in-container.
+**/*.test
+**/*.out
+**/*.log
+node_modules
+
+# Secrets — never want these in an image even by accident
+.env
+.env.*
+*.pem
+*.key
+
+# Docs not needed at runtime
+*.md
+docs
+
+# Deploy/build configs that don't belong inside the image
+deploy
+# The managed-mesh factory reads these two provisioning assets at runtime.
+# Keep all other deploy files (and any local credentials) out of the context.
+!deploy/
+deploy/*
+!deploy/headscale/
+deploy/headscale/*
+!deploy/headscale/cloud-init.sh
+!deploy/headscale/acls.hujson
+Makefile
+Dockerfile*

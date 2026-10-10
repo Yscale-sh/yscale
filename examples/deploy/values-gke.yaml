@@ -1,0 +1,23 @@
+# Helm values overlay for yscale-agent on a Google Kubernetes Engine (GKE) cluster.
+
+# SaaS Agent Endpoint
+endpoint: "wss://api.yscale.sh"
+
+# Use an existing Secret containing YSCALE_TOKEN. SaaS mints the mesh key.
+existingSecret: "yscale-agent-secrets"
+
+# Map onto the gcp cloudProvider configuration
+cloudProvider: "gcp"
+
+# Namespaced RBAC is preferred as the default scope
+rbac:
+  create: true
+  scope: "namespaced"
+  allowedNamespaces:
+    - "default"
+
+# Control-plane API server endpoint as reachable from burst nodes (via Tailscale tailnet).
+# Operator must update this with the GKE API server endpoint that is MagicDNS-resolvable.
+bootstrap:
+  authMode: gke
+  apiserverURL: "https://gke-api.example.invalid:443"

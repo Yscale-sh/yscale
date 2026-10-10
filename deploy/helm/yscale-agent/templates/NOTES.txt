@@ -1,0 +1,71 @@
+Yscale Cluster Connector {{ .Chart.AppVersion }} installed in namespace {{ .Release.Namespace }}.
+(Chart/release/resources keep the yscale-agent name for compatibility.)
+
+Connector image: {{ include "yscale-agent.agentImage" . }}
+{{- if not .Values.agent.image.digest }}
+(mutable tag — set agent.image.digest to a sha256:<64 hex> pin, and
+agent.image.requireDigest=true in production, for an immutable reference.)
+{{- end }}
+
+Pod:
+  kubectl -n {{ .Release.Namespace }} get pods -l app.kubernetes.io/instance={{ .Release.Name }}
+
+Cluster Connector logs (container name: agent):
+  kubectl -n {{ .Release.Namespace }} logs -l app.kubernetes.io/instance={{ .Release.Name }} -c agent --tail=100 -f
+
+Tailscale sidecar logs (confirm the Connector joined the tailnet):
+  kubectl -n {{ .Release.Namespace }} logs -l app.kubernetes.io/instance={{ .Release.Name }} -c tailscale --tail=100 -f
+
+The Connector registers on Yscale's tailnet as `yscale-agent-<cluster-id>`.
+Burst nodes reach it by MagicDNS at:
+  http://yscale-agent-<cluster-id>:{{ .Values.bootstrap.port }}
+
+No inbound UDP port-forward required — Tailscale handles NAT traversal.
+
+RBAC scope: {{ .Values.rbac.scope }}
+{{- if .Values.rbac.allowedNamespaces }}
+Allowed workload namespaces:
+{{- range .Values.rbac.allowedNamespaces }}
+  - {{ . }}
+{{- end }}
+Workloads submitted with metadata.namespace outside this list will be rejected.
+The Connector can read storage-credentials Secrets (`get`, nothing else) in
+exactly these namespaces and nowhere else. Set the same list as the tenant's
+authorized workload namespaces in central, or submissions will be refused
+there first.
+{{- else }}
+No rbac.allowedNamespaces set: the Connector cannot read a storage-credentials
+Secret anywhere, so workloads using spec.storage will fail to sign bucket URLs.
+List the workload namespaces to enable them — scope: cluster does NOT grant
+cluster-wide Secret reads, deliberately.
+{{- end }}
+
+Bootstrap endpoint bind: {{ include "yscale-agent.bootstrapListen" . }} (bootstrap.listenMode={{ default "loopback" .Values.bootstrap.listenMode }})
+
+=== Upgrading from a chart older than 0.2.0 ===
+
+Two changes need a look before you roll this out:
+
+1. The bootstrap/storage endpoint no longer binds all interfaces. It mints
+   kubelet bootstrap tokens and signs bucket URLs, and on a Pod a wildcard
+   bind published both on the cluster pod IP where the tailnet ACL cannot
+   reach (SECURITY-REVIEW.md H3). The default now binds loopback and
+   `tailscale serve` forwards inbound tailnet TCP to it — bursts reaching the
+   Connector by MagicDNS are unaffected. Anything that dialled the agent Pod's
+   cluster IP on :{{ .Values.bootstrap.port }} directly will stop working.
+   Restore the old behaviour explicitly if you truly need it:
+     --set bootstrap.listenMode=custom --set bootstrap.listenAddress=0.0.0.0:{{ .Values.bootstrap.port }}
+
+2. Storage signing now needs rbac.allowedNamespaces to list every namespace
+   whose workloads use spec.storage, including on scope: cluster installs.
+   Without it the Connector has no Secret read permission and signing fails.
+
+A Connector image older than this chart still works: it reads
+-bootstrap-listen=127.0.0.1:{{ .Values.bootstrap.port }} as a plain bind address.
+A newer image under an older chart works too — a bare :{{ .Values.bootstrap.port }}
+resolves to the tailnet address, or loopback when tailscaled has none.
+
+To submit your first workload:
+  yscale apply -f workload.yaml
+
+Cluster id: stored at /var/lib/yscale/cluster-id inside the pod.

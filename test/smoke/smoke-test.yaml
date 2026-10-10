@@ -1,0 +1,503 @@
+# yscale end-to-end smoke test — manifest-driven, in-cluster.
+#
+# Installation and manual platform runs are reconciled from the environment's
+# Flux repository. Do not imperatively apply or clone the CronJob.
+#
+# What it does:
+#   Cycles a busybox workload through the customer's yscale-agent +
+#   yscale-cloud onto the cheapest burst of the chosen backend
+#   (default: fly nano). Asserts the joined-CNI lifecycle works
+#   end-to-end:
+#     1. Burst node joins the cluster (name: ys-burst-<6hex>)
+#     2. Burst node reaches Ready
+#     3. Test pod schedules onto burst + reaches phase=Succeeded
+#     4. Pod stdout contains literal "MARKER-OK"
+#     5. yscale's natural reap removes the burst node from K8s
+#   Cost: <$0.01 on fly nano, <$0.02 on linode g6-nanode-1.
+#
+# Re-running:
+#   The CronJob runs every six hours. A manual platform run is a uniquely named
+#   one-shot Job committed to Flux and removed by a follow-up commit. Each run
+#   has its own TEST_ID and touches only its own resources.
+#
+# Parameterizing:
+#   To target a different backend or size, edit the BACKEND/SIZE env
+#   vars in the Job spec below.
+#
+# Pre-conditions (verified at start of run; clear FATAL exit
+# otherwise):
+#   - yscale-agent pod connected to a yscale-cloud instance
+#   - yscale-cloud configured with credentials for $BACKEND
+#   - The `default` namespace is in yscale-agent's
+#     rbac.allowedNamespaces (the test creates its workload there).
+#     With SMOKE_NAMESPACE set to anything else, that namespace must
+#     ALSO be in the account's authorized workload namespaces in
+#     central — submissions outside them are refused with a 403.
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: yscale-smoke-runner
+  namespace: yscale
+---
+# Cluster-scoped reads only — Nodes are cluster-scoped (so we can
+# verify burst-node join + reap), and pod-list is cluster-wide to
+# find both the agent (in `yscale`) and the smoke workload pod
+# (which central+agent create in the workload's spec.metadata.namespace,
+# default `default`). No writes at cluster scope.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: yscale-smoke-runner
+rules:
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: yscale-smoke-runner
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: yscale-smoke-runner
+subjects:
+  - kind: ServiceAccount
+    name: yscale-smoke-runner
+    namespace: yscale
+---
+# Same-namespace Secret read so the runner can discover the agent's
+# YSCALE_TOKEN secretKeyRef dynamically (the Secret's name varies by
+# install — chart default vs values.existingSecret override). Scoped
+# to `yscale` ns only.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: yscale-smoke-runner-secret-read
+  namespace: yscale
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: yscale-smoke-runner-secret-read
+  namespace: yscale
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: yscale-smoke-runner-secret-read
+subjects:
+  - kind: ServiceAccount
+    name: yscale-smoke-runner
+    namespace: yscale
+---
+# The test script. Lives in a ConfigMap so the manifest stays
+# diff-readable and the script is editable without rebuilding an
+# image. Mounted at /test/run.sh on the runner pod.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: yscale-smoke-script
+  namespace: yscale
+data:
+  run.sh: |
+    #!/bin/sh
+    # ----- yscale smoke test runner (in-cluster) -----
+    set -eu
+
+    # The kctl wrapper below pins the in-cluster endpoint and credentials;
+    # do not delete the image's kubeconfig or rely on its auto-detection.
+    unset KUBECONFIG
+
+    BACKEND="${BACKEND:-flyio}"
+    SIZE="${SIZE:-nano}"
+    TIMEOUT="${TIMEOUT_SECONDS:-600}"
+    CENTRAL="${CENTRAL_ENDPOINT:-http://yscale-cloud.yscale:8443}"
+    TEST_ID="smoke-$(date +%s)-$$"
+    START_SECS=$(date +%s)
+    NS="default"
+    WORKLOAD_ID=""
+
+    log()      { printf '[smoke %s +%ss] %s\n' "$(date +%H:%M:%S)" "$(($(date +%s) - START_SECS))" "$*"; }
+    fatal()    { log "FATAL: $*"; exit 1; }
+    elapsed()  { echo "$(($(date +%s) - START_SECS))s"; }
+
+    wait_for() {
+      desc="$1"; cond="$2"; interval="${3:-3}"
+      log "waiting: $desc"
+      while ! eval "$cond" >/dev/null 2>&1; do
+        if [ "$(($(date +%s) - START_SECS))" -gt "$TIMEOUT" ]; then
+          fatal "timed out waiting for: $desc"
+        fi
+        sleep "$interval"
+      done
+      log "OK: $desc"
+    }
+
+    cleanup() {
+      rc=$?
+      # Remove the token scratch file HERE, after rc is captured. It used to be
+      # done in a second `trap 'rm -f "$TMP_TOKEN"; cleanup' EXIT` that replaced
+      # this one -- and `rm -f` succeeds, resetting $? to 0, so cleanup read 0
+      # instead of the real status. Every `fatal` therefore exited 0 and the Job
+      # recorded succeeded=1: the smoke test reported PASS while failing, for six
+      # days (2026-08-14 -> 08-20), and the failure-review CronJob kept saying
+      # "not consecutive failures" because no run ever failed.
+      rm -f "${TMP_TOKEN:-}"
+      # A harness failure must not strand billable capacity. Once central has
+      # accepted the workload, cancel it on every non-zero exit. The workload's
+      # own deadline remains the backstop if this Pod is SIGKILLed and cannot
+      # execute its trap.
+      if [ "$rc" -ne 0 ] && [ -n "${WORKLOAD_ID:-}" ] && [ -n "${YSCALE_TOKEN:-}" ]; then
+        CANCEL_CODE=$(curl -sS --max-time 20 -o /dev/null -w '%{http_code}' \
+          -X DELETE -H "Authorization: Bearer $YSCALE_TOKEN" \
+          "$CENTRAL/v1/workloads/$WORKLOAD_ID" 2>/dev/null || echo unavailable)
+        log "failure cleanup: central cancel status=$CANCEL_CODE"
+      fi
+      log "exit code: $rc (elapsed=$(elapsed))"
+      exit "$rc"
+    }
+    trap cleanup EXIT
+
+    # ----- preflight -----
+    log "starting backend=$BACKEND size=$SIZE timeout=${TIMEOUT}s test_id=$TEST_ID"
+    log "env: KUBERNETES_SERVICE_HOST=${KUBERNETES_SERVICE_HOST:-<unset>}:${KUBERNETES_SERVICE_PORT:-<unset>}"
+    # Pin kubectl to the in-cluster apiserver via explicit --server +
+    # --certificate-authority + --token rather than relying on
+    # in-cluster auto-detection (which is failing in this image even
+    # though all the inputs are present). The flags use the values
+    # kubelet stamps on every pod.
+    SA_TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token 2>/dev/null)
+    SA_CA=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+    APISERVER="https://${KUBERNETES_SERVICE_HOST}:${KUBERNETES_SERVICE_PORT}"
+    kctl() {
+      kubectl \
+        --server="$APISERVER" \
+        --certificate-authority="$SA_CA" \
+        --token="$SA_TOKEN" \
+        "$@"
+    }
+    log "using explicit in-cluster config: server=$APISERVER"
+    for i in 1 2 3 4 5 6 7 8 9 10; do
+      if KUBE_OUT=$(kctl get --raw /version --request-timeout=4s 2>&1); then
+        log "preflight: apiserver reachable (attempt $i): $KUBE_OUT"
+        break
+      fi
+      if [ "$i" = "10" ]; then
+        log "kubectl error: $KUBE_OUT"
+        fatal "kubectl can't reach apiserver after 10 attempts"
+      fi
+      sleep 3
+    done
+    # Pin the namespace; do NOT discover it cluster-wide. `-A ... items[0]` picks
+    # whichever agent pod etcd returns first, and once the hosted-demo tenant landed
+    # in yscale-system that became a DIFFERENT tenant's agent -- whose secrets this
+    # ServiceAccount is not allowed to read (the Role above is scoped to `yscale`
+    # only), so every run died on a Forbidden it could not have succeeded past.
+    AGENT_NS="${AGENT_NAMESPACE:-yscale}"
+    AGENT_COUNT=$(kctl -n "$AGENT_NS" get pods -l 'app.kubernetes.io/name=yscale-agent' \
+      --field-selector status.phase=Running \
+      -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | wc -w)
+    [ "$AGENT_COUNT" -gt 0 ] || fatal "no Running yscale-agent pod in namespace=$AGENT_NS"
+    log "preflight OK: agent in namespace=$AGENT_NS"
+
+    # ----- submit workload to CENTRAL (canonical Path A) -----
+    # POST workload YAML to central's /v1/workloads with YSCALE_TOKEN
+    # bearer. Central runs Plan, provisions the burst, and pushes
+    # CreateJob to the agent via WS — agent then creates the Job in
+    # the customer's cluster with the yscale.sh/workload-id label,
+    # which is what the completion-watcher filters on for reap.
+    # See docs/internals/agent.md "Workload reconciler — the two
+    # submission paths" for the Path A / Path B taxonomy.
+    # Discover the customer's YSCALE_TOKEN dynamically. The Secret's
+    # name varies by install (default chart name vs values.existingSecret
+    # override), so we read the agent pod's spec to find its secretKeyRef,
+    # then read THAT secret. Value goes to a 0400 tmpfile (not stdout) so
+    # /proc grep + kubectl audit don't leak it.
+    umask 077
+    TMP_TOKEN=$(mktemp -t yscale-tok.XXXXXX)
+    # NO second trap here on purpose -- `trap cleanup EXIT` above already runs,
+    # and cleanup() unlinks $TMP_TOKEN itself after capturing $?.
+    # Namespace-scoped, same reason as AGENT_NS above: a cluster-wide items[0]
+    # returns a pod in another tenant's namespace, which is then looked up in
+    # $AGENT_NS and is not there.
+    AGENT_POD=$(kctl -n "$AGENT_NS" get pods -l 'app.kubernetes.io/name=yscale-agent' \
+      --field-selector status.phase=Running \
+      -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+    [ -n "$AGENT_POD" ] || fatal "no Running yscale-agent pod in namespace=$AGENT_NS"
+    SECRET_REF=$(kctl -n "$AGENT_NS" get pod "$AGENT_POD" \
+      -o jsonpath='{range .spec.containers[?(@.name=="agent")].env[?(@.name=="YSCALE_TOKEN")].valueFrom.secretKeyRef}{.name}/{.key}{end}' \
+      2>/dev/null)
+    [ -n "$SECRET_REF" ] || fatal "agent pod has no YSCALE_TOKEN secretKeyRef"
+    SECRET_NAME="${SECRET_REF%/*}"; SECRET_KEY="${SECRET_REF#*/}"
+    log "agent token source: secret/$SECRET_NAME key=$SECRET_KEY (ns=$AGENT_NS)"
+    kctl -n "$AGENT_NS" get secret "$SECRET_NAME" \
+      -o jsonpath="{.data.${SECRET_KEY}}" \
+      | base64 -d > "$TMP_TOKEN" 2>/dev/null
+    [ -s "$TMP_TOKEN" ] || fatal "YSCALE_TOKEN missing from $AGENT_NS/$SECRET_NAME"
+    YSCALE_TOKEN=$(cat "$TMP_TOKEN")
+    WL_NAME="yscale-smoke-${TEST_ID}"
+    WL_YAML="$(cat <<EOF
+    metadata:
+      name: ${WL_NAME}
+      namespace: ${NS}
+      labels:
+        yscale.sh/smoke-test-id: "${TEST_ID}"
+    spec:
+      image: busybox:1.36
+      size: ${SIZE}
+      backend: ${BACKEND}
+      networking:
+        # Full is the only supported networking tier; the lite tier has
+        # been removed and central refuses it on submit.
+        tier: full
+      command: ["sh", "-c"]
+      args:
+        - |
+          echo "yscale-smoke: running on \$(hostname)"
+          while [ ! -f /tmp/yscale-smoke-release ]; do sleep 1; done
+          echo "yscale-smoke: MARKER-OK"
+          while [ ! -f /tmp/yscale-smoke-marker-read ]; do sleep 1; done
+      retries: 0
+      budget:
+        maxUSD: 0.05
+        deadline: 10m
+    EOF
+    )"
+    log "submitting workload $WL_NAME to central ($CENTRAL)"
+    RESP=$(printf '%s' "$WL_YAML" | curl -sS -w '\n__HTTP_CODE__=%{http_code}\n' \
+      -H "Authorization: Bearer $YSCALE_TOKEN" \
+      -H 'Content-Type: application/yaml' \
+      --data-binary @- \
+      "$CENTRAL/v1/workloads" 2>&1)
+    HTTP_CODE=$(printf '%s' "$RESP" | grep '^__HTTP_CODE__=' | cut -d= -f2)
+    BODY=$(printf '%s' "$RESP" | grep -v '^__HTTP_CODE__=')
+    case "$HTTP_CODE" in
+      200|201|202) log "central accepted (HTTP $HTTP_CODE): $BODY" ;;
+      *) fatal "central rejected (HTTP $HTTP_CODE): $BODY" ;;
+    esac
+
+    # ----- lifecycle waits -----
+    # Stage 1: wait for THIS run's burst node. Parse burst_id from
+    # central's response and watch for that specific node — avoids
+    # latching onto a leaked node from a previous run (Path B's
+    # no-reap gap — see docs/internals/agent.md).
+    BURST_ID=$(printf '%s' "$BODY" | sed -n 's/.*"burst_id":"\(burst_[0-9a-f]*\)".*/\1/p')
+    WORKLOAD_ID=$(printf '%s' "$BODY" | sed -n 's/.*"id":"\(wl_[0-9a-f]*\)".*/\1/p')
+    [ -n "$BURST_ID" ] || fatal "couldn't parse burst_id from central response: $BODY"
+    [ -n "$WORKLOAD_ID" ] || fatal "couldn't parse workload id from central response"
+    BURST_NODE="ys-burst-${BURST_ID#burst_}"
+    log "expecting burst node: $BURST_NODE"
+    wait_for "burst node $BURST_NODE joins cluster" \
+      "kctl get node '$BURST_NODE' >/dev/null 2>&1"
+
+    # Stage 2: node Ready.
+    wait_for "burst node Ready" \
+      "kctl get node '$BURST_NODE' -o jsonpath='{.status.conditions[?(@.type==\"Ready\")].status}' 2>/dev/null | grep -q True"
+
+    # Stage 3: smoke pod scheduled to burst + Succeeded. Path A means
+    # central pushed CreateJob → agent created Job named WL_NAME →
+    # pod inherits app.kubernetes.io/managed-by=yscale label.
+    wait_for "smoke pod scheduled to burst" \
+      "kctl -n '$NS' get pods -l 'app.kubernetes.io/managed-by=yscale' --field-selector=spec.nodeName='$BURST_NODE' --no-headers 2>/dev/null | grep -q ."
+    POD=$(kctl -n "$NS" get pods -l 'app.kubernetes.io/managed-by=yscale' --field-selector=spec.nodeName="$BURST_NODE" --no-headers -o custom-columns=NAME:.metadata.name | head -1)
+    [ -n "$POD" ] || fatal "no managed pod scheduled to $BURST_NODE"
+    log "smoke pod: $POD"
+    wait_for "smoke pod Running" \
+      "kctl -n '$NS' get pod '$POD' -o jsonpath='{.status.phase}' 2>/dev/null | grep -q Running"
+    kctl -n "$NS" logs "$POD" 2>/dev/null | grep -q 'yscale-smoke: running' \
+      || fatal "live kubelet logs unavailable"
+    kctl -n "$NS" exec "$POD" -- sh -c 'printf "yscale-smoke: EXEC-OK\n"' 2>/dev/null \
+      | grep -q 'EXEC-OK' || fatal "live kubelet exec unavailable"
+    log "OK: live kubelet logs + exec verified"
+
+    # Stage 4: read the marker before allowing container completion. Otherwise
+    # natural provider teardown can remove the kubelet before the final read.
+    kctl -n "$NS" exec "$POD" -- touch /tmp/yscale-smoke-release
+    wait_for "pod output contains MARKER-OK" \
+      "kctl -n '$NS' logs '$POD' --request-timeout=10s 2>/dev/null | grep -q 'yscale-smoke: MARKER-OK'"
+    log "OK: pod output verified (MARKER-OK)"
+    kctl -n "$NS" exec "$POD" -- touch /tmp/yscale-smoke-marker-read
+    wait_for "pod Succeeded" \
+      "kctl -n '$NS' get pod '$POD' -o jsonpath='{.status.phase}' 2>/dev/null | grep -q Succeeded"
+
+    # Stage 5: yscale's natural reap removes the Node.
+    wait_for "burst node removed (yscale reap)" \
+      "! kctl get node '$BURST_NODE' >/dev/null 2>&1" 5
+
+    log "PASS backend=$BACKEND size=$SIZE elapsed=$(elapsed)"
+---
+# The scheduled runner. Jobs are non-overlapping, cost-capped by the submitted
+# workload, and retained briefly so the failure scanner can detect consecutive
+# failures. Manual platform runs are also Flux-owned.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: yscale-smoke-test
+  namespace: yscale
+  labels:
+    yscale.sh/role: smoke-test-runner
+spec:
+  schedule: "23 */6 * * *"
+  timeZone: "Etc/UTC"
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 900
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    metadata:
+      labels:
+        yscale.sh/role: smoke-test-runner
+        yscale.sh/synthetic: fly-lifecycle
+    spec:
+      ttlSecondsAfterFinished: 86400
+      backoffLimit: 0
+      activeDeadlineSeconds: 900
+      template:
+        metadata:
+          labels:
+            yscale.sh/role: smoke-test-runner
+            yscale.sh/synthetic: fly-lifecycle
+        spec:
+          serviceAccountName: yscale-smoke-runner
+          restartPolicy: Never
+          containers:
+            - name: runner
+              # alpine/k8s ships kubectl + jq + curl, no install at runtime.
+              image: alpine/k8s:1.31.5
+              imagePullPolicy: IfNotPresent
+              env:
+                - name: BACKEND
+                  value: "flyio"
+                - name: SIZE
+                  value: "nano"
+                - name: TIMEOUT_SECONDS
+                  value: "600"
+              command: ["/bin/sh", "/test/run.sh"]
+              volumeMounts:
+                - { name: script, mountPath: /test }
+              resources:
+                requests: { cpu: "50m",  memory: 64Mi }
+                limits:   { cpu: "200m", memory: 128Mi }
+          volumes:
+            - name: script
+              configMap:
+                name: yscale-smoke-script
+                defaultMode: 0555
+---
+# Failure watcher: every 30 minutes, inspect completed synthetic Jobs. Two
+# consecutive failures trigger the Litewindow remediation webhook in
+# propose-only mode. The hook Secret is optional so public installs can use the
+# same manifest without carrying our private endpoint or token.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: yscale-smoke-failure-review
+  namespace: yscale
+  labels:
+    yscale.sh/role: smoke-failure-review
+spec:
+  schedule: "7,37 * * * *"
+  timeZone: "Etc/UTC"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 120
+      template:
+        metadata:
+          labels:
+            yscale.sh/role: smoke-failure-review
+        spec:
+          serviceAccountName: yscale-smoke-runner
+          restartPolicy: Never
+          containers:
+            - name: reviewer
+              image: alpine/k8s:1.31.5
+              imagePullPolicy: IfNotPresent
+              command:
+                - /bin/sh
+                - -ceu
+                - |
+                  SA=/var/run/secrets/kubernetes.io/serviceaccount
+                  APISERVER="https://${KUBERNETES_SERVICE_HOST}:${KUBERNETES_SERVICE_PORT}"
+                  kctl() {
+                    kubectl --server="$APISERVER" \
+                      --certificate-authority="$SA/ca.crt" \
+                      --token="$(cat "$SA/token")" "$@"
+                  }
+
+                  jobs=$(kctl -n yscale get jobs \
+                    -l 'yscale.sh/synthetic=fly-lifecycle' -o json)
+                  recent=$(printf '%s' "$jobs" | jq -c '
+                    [.items[]
+                      | select(((.status.succeeded // 0) > 0) or ((.status.failed // 0) > 0))]
+                    | sort_by(.metadata.creationTimestamp)
+                    | .[-2:]')
+                  count=$(printf '%s' "$recent" | jq 'length')
+                  [ "$count" -eq 2 ] || {
+                    echo "[smoke-review] fewer than two completed runs; no incident"
+                    exit 0
+                  }
+                  consecutive=$(printf '%s' "$recent" | jq 'all(.[]; (.status.failed // 0) > 0)')
+                  [ "$consecutive" = true ] || {
+                    echo "[smoke-review] latest runs are not consecutive failures"
+                    exit 0
+                  }
+
+                  names=$(printf '%s' "$recent" | jq -r 'map(.metadata.name) | join(",")')
+                  uids=$(printf '%s' "$recent" | jq -r 'map(.metadata.uid) | join(":")')
+                  incident_key=$(printf '%s' "$uids" | sha256sum | cut -d' ' -f1)
+                  echo "[smoke-review] consecutive failures jobs=$names incident=$incident_key"
+
+                  if ! hook=$(kctl -n yscale get secret yscale-remediation-hook -o json 2>/dev/null); then
+                    echo "[smoke-review] remediation hook not configured; logs/alerts only"
+                    exit 0
+                  fi
+                  url=$(printf '%s' "$hook" | jq -r '.data.url // empty' | base64 -d)
+                  token=$(printf '%s' "$hook" | jq -r '.data.token // empty' | base64 -d)
+                  [ -n "$url" ] || {
+                    echo "[smoke-review] remediation hook secret has no url" >&2
+                    exit 1
+                  }
+
+                  payload=$(jq -cn \
+                    --arg source yscale-scheduled-smoke \
+                    --arg incident_key "$incident_key" \
+                    --arg jobs "$names" \
+                    '{source:$source, incident_key:$incident_key,
+                      mode:"propose_only", severity:"warning",
+                      summary:("Two consecutive Fly lifecycle smoke failures: " + $jobs),
+                      labels:{backend:"flyio", synthetic:"fly-lifecycle"}}')
+                  if [ -n "$token" ]; then
+                    curl --fail --silent --show-error --max-time 15 \
+                      -H "Authorization: Bearer $token" \
+                      -H 'Content-Type: application/json' \
+                      --data-binary "$payload" "$url"
+                  else
+                    curl --fail --silent --show-error --max-time 15 \
+                      -H 'Content-Type: application/json' \
+                      --data-binary "$payload" "$url"
+                  fi
+                  echo "[smoke-review] remediation proposal requested incident=$incident_key"
+              resources:
+                requests: { cpu: "20m", memory: 32Mi }
+                limits: { cpu: "100m", memory: 96Mi }

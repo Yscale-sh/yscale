@@ -1,0 +1,66 @@
+# Example yscale-agent values overlay for LKE cluster <LKE_CLUSTER_ID>.
+# Usage:
+#   KUBECONFIG=~/.kube/<your-cluster>-kubeconfig.yaml \
+#     helm install yscale-agent ./deploy/helm/yscale-agent \
+#       -n yscale -f deploy/helm/yscale-agent/values-lke.yaml
+#
+# This file is now a thin overlay — everything cloud-specific is
+# derived from cloudProvider via the chart's _helpers.tpl. To target
+# another LKE cluster, copy this file and change clusterID +
+# bootstrap.apiserverURL.
+#
+# Prereqs (must exist before install):
+#   - Namespace `yscale`
+#   - Secret `yscale-agent-secrets` (YSCALE_TOKEN + TS_AUTHKEY)
+#   - Secret `yscale-agent-subnet-router-auth` (TS_AUTHKEY for router)
+#   - Secret `fly-registry` (docker pullsecret) for the agent image
+#   - yscale-cloud Deployment + Service running in same namespace
+
+# === Cloud + cluster identity ===
+cloudProvider: "linode"  # → auto-resolves cluster.dnsIP=10.96.0.10
+                         # → auto-resolves burst providerID to linode://...
+                         #   (bypasses Linode CCM's delete-external-nodes loop
+                         #   by registering the burst's real linode://<id>)
+clusterID: "<LKE_CLUSTER_ID>"   # required (else TS_HOSTNAME is "REPLACE-AT-RUNTIME")
+
+# === Secrets ===
+existingSecret: "yscale-agent-secrets"
+
+# === In-cluster yscale-cloud endpoint ===
+endpoint: "ws://yscale-cloud.yscale:8443"
+
+# === Agent RBAC ===
+# Agent code uses cluster-scope informers — namespaced doesn't work.
+rbac:
+  create: true
+  scope: cluster
+  allowedNamespaces:
+    - default
+    - yscale
+
+# === Burst-node bootstrap ===
+bootstrap:
+  enabled: true
+  port: 8080
+  # LKE's apiserver. Cert SAN covers this hostname so kubelet's
+  # post-bootstrap kubeconfig validates correctly.
+  apiserverURL: "https://<LKE_CLUSTER_ID>.<region>.linodelke.net:443"
+
+# === Subnet router DaemonSet (joined-CNI) ===
+# Chart default is `false` to protect the operator's homelab from the
+# host-tailscaled conflict. LKE needs it on.
+subnetRouter:
+  enabled: true
+  authKeySecret:
+    name: yscale-agent-subnet-router-auth
+    key: TS_AUTHKEY
+
+# === Smoke-test only: no persistence ===
+# LKE's default storage class (linode-block-storage) mounts with
+# uid/gid mismatch against the agent's runAsUser → `cluster-id:
+# permission denied`. Disable persistence for the smoke test;
+# cluster-id regenerates on each restart (acceptable while testing).
+# Production fix: add podSecurityContext.fsGroup to the agent's
+# Deployment template OR change the agent image's runAsUser.
+persistence:
+  enabled: false

@@ -1,0 +1,102 @@
+# Cilium values for yscale joined-CNI (asymmetric burst-only Cilium).
+#
+# This installs Cilium in the cluster with the agent DaemonSet pinned to
+# burst nodes ONLY (nodeSelector). Operator + CRDs are cluster-wide
+# (small footprint, inert until a CiliumNode exists). Homelab nodes
+# keep running their existing CNI (flannel for this cluster); Cilium
+# never touches them.
+#
+# Apply with:
+#   helm upgrade --install cilium cilium/cilium \
+#     --namespace kube-system --version 1.19.4 \
+#     -f deploy/manifests/cilium-values.yaml
+#
+# See docs/JOINED-CNI.md for the architectural context.
+
+# Pin the agent DaemonSet to burst nodes — but exclude bursts that
+# don't need it. Two modes are excluded:
+#
+#   yscale.sh/cilium-mode=host → host-mode cilium-agent (baked binary,
+#                                no container) is already running on
+#                                the burst. A DS pod here would race
+#                                to own /etc/cni/net.d/05-cilium.conflist.
+#
+#   yscale.sh/cilium-mode=lite → legacy label from the removed lite
+#                                tier (bridge-CNI, no in-burst Cilium).
+#                                The tier is refused during workload
+#                                admission, so central no longer labels
+#                                bursts this way. Kept in the exclusion
+#                                list so a stale, still-registered burst
+#                                node still stays out of the DaemonSet.
+#
+# Only burst nodes without that label (or with cilium-mode unset =
+# legacy/fallback path) get the DS pod.
+nodeSelector:
+  yscale.sh/burst-node: "true"
+affinity:
+  nodeAffinity:
+    requiredDuringSchedulingIgnoredDuringExecution:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: yscale.sh/burst-node
+              operator: In
+              values: ["true"]
+            - key: yscale.sh/cilium-mode
+              operator: NotIn
+              values: ["host", "lite"]
+
+# Tailscale is the underlay — no Cilium-side overlay.
+routingMode: native
+tunnelProtocol: ""
+
+# IPs in this range are treated as in-cluster (no SNAT). This is the
+# homelab k3s cluster's pod CIDR. Burst pods get /24 slices from this
+# range via kubelet's standard --node-spec.podCIDR.
+ipv4NativeRoutingCIDR: 10.42.0.0/16
+
+# eBPF replaces kube-proxy on bursts. Homelab nodes still have their
+# own kube-proxy (k3s built-in); this only matters for the burst pod.
+kubeProxyReplacement: true
+k8sServiceHost: 100.64.0.1  # placeholder — set to your apiserver's tailnet IP
+k8sServicePort: 6443
+
+# Use kubelet's per-node podCIDR allocation rather than Cilium's own pool.
+ipam:
+  mode: kubernetes
+
+enableIPv4Masquerade: true
+enableIPv6: false
+bpf:
+  masquerade: true
+
+# Don't displace the homelab's flannel CNI conflist. On burst nodes
+# Cilium will still write its own (cni.install: true is the default).
+cni:
+  exclusive: false
+
+# Keep the install light for the homelab.
+hubble:
+  enabled: false
+operator:
+  replicas: 1
+
+# Disable the L7 proxy (envoy). Without this disabled, the cilium-envoy
+# DaemonSet would run on ALL nodes including the homelab — which we
+# explicitly want to leave untouched.
+envoy:
+  enabled: false
+l7Proxy: false
+
+# Cilium agent image is large — give it room.
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    memory: 1Gi
+
+# Mirror Cilium image on registry.fly.io so burst pulls are LAN-speed
+# from inside Fly's network rather than the multi-minute public quay.io
+# pull observed on first deployment (4m57s for a 260MB image).
+image:
+  override: registry.fly.io/yscale-burst-image:cilium-v1.19.4

@@ -1,0 +1,60 @@
+name: lke-release-gate
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_spend:
+        description: Create paid, short-lived Linode resources
+        required: true
+        type: choice
+        default: "no"
+        options:
+          - "no"
+          - "yes"
+permissions:
+  contents: read
+concurrency:
+  group: lke-release-gate
+  cancel-in-progress: false
+jobs:
+  hostile-lke:
+    name: Linode burst survives LKE and leaves zero residue
+    if: github.event.repository.private && vars.ENABLE_LEGACY_WORKFLOWS == 'true'
+    runs-on: [self-hosted, yscale-repo]
+    timeout-minutes: 60
+    env:
+      CONFIRM_SPEND: "yes"
+      YSCALE_TOKEN: ${{ secrets.YSCALE_TOKEN }}
+      FABRIC_URL: ${{ secrets.YSCALE_EVIDENCE_FABRIC_URL }}
+      FABRIC_API_KEY: ${{ secrets.YSCALE_EVIDENCE_FABRIC_API_KEY }}
+      FABRIC_USER: ${{ secrets.YSCALE_EVIDENCE_FABRIC_USER }}
+      ENDPOINT: ${{ vars.YSCALE_ENDPOINT }}
+      RUN_ID: lke-${{ github.run_id }}-${{ github.run_attempt }}
+      CLUSTER: yscale-lke-test-${{ github.run_id }}-${{ github.run_attempt }}
+      MAX_TEST_SECONDS: "2100"
+      JOIN_TIMEOUT: "600"
+      REAP_WAIT_SECONDS: "600"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Run paid LKE release gate with guaranteed teardown
+        working-directory: deploy/lke-test
+        run: |
+          linode_token="$(aws ssm get-parameter \
+            --name /shared/linode/admin-api-token \
+            --with-decryption \
+            --query Parameter.Value \
+            --output text)"
+          echo "::add-mask::${linode_token}"
+          export LINODE_TOKEN="${linode_token}"
+          ./verify.sh
+      - name: Record gate scope
+        if: always()
+        run: |
+          {
+            echo '## LKE release gate'
+            echo
+            echo '- Manual dispatch only; no schedule creates cloud resources.'
+            echo '- Hard wall clock: 35 minutes inside the harness, 60 minutes at the job level so teardown can finish.'
+            echo '- Pass requires LKE survival, Pod completion, authoritative reap, and zero exact Linode/Fabric residue.'
+          } >>"$GITHUB_STEP_SUMMARY"

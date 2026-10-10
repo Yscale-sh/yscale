@@ -1,0 +1,69 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "yscale.fullname" . }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "yscale.labels" . | nindent 4 }}
+spec:
+  # Singleton controller — running multiple replicas would cause conflicting reconciles.
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "yscale.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "yscale.selectorLabels" . | nindent 8 }}
+      annotations:
+        # Roll the pod when the rendered config changes.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+    spec:
+      serviceAccountName: {{ include "yscale.serviceAccountName" . }}
+      containers:
+        - name: yscale
+          image: {{ include "yscale.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - --config=/etc/yscale/config.yaml
+          env:
+            - name: FLYIO_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "yscale.secretName" . }}
+                  key: FLYIO_TOKEN
+                  optional: true
+            - name: TS_AUTHKEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "yscale.secretName" . }}
+                  key: TS_AUTHKEY
+                  optional: true
+            - name: K3S_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "yscale.secretName" . }}
+                  key: K3S_TOKEN
+                  optional: true
+          volumeMounts:
+            - name: config
+              mountPath: /etc/yscale
+              readOnly: true
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "yscale.configMapName" . }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

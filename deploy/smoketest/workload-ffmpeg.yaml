@@ -1,0 +1,39 @@
+# Smoke-test workload: a tiny ffmpeg CPU transcode that exercises the
+# full SaaS burst path end-to-end:
+#   1. kubectl apply -f -> Workload CR lands in customer cluster
+#   2. agent's workload_reconciler.go sees it, POSTs to central /v1/workloads
+#   3. central's decider mints a TS auth key, calls Fly CreateMachine
+#   4. Fly machine boots, joins yscale's tailnet, fetches kubelet kubeconfig
+#      from the agent over MagicDNS, kubelet registers as a burst node
+#   5. agent's CreateJob handler applies the Job; ffmpeg pod schedules
+#      onto the burst node, transcodes a sample file, exits 0
+#   6. central tears the burst down on workload completion (future)
+#
+# Cost: ~$0.001 (a few seconds of shared-cpu-1x on Fly). The transcode
+# is fully self-contained: ffmpeg's lavfi source synthesizes a test
+# pattern, encodes it with libx264, and discards the output — no
+# network fetch, so the test can't fail on a dead sample URL.
+apiVersion: yscale.sh/v1
+kind: Workload
+metadata:
+  name: smoketest-ffmpeg
+  namespace: default
+spec:
+  image: linuxserver/ffmpeg:latest
+  backend: flyio
+  size: nano  # 250m CPU, 512MiB — fits in shared-cpu-1x:2048MB after kubelet overhead
+  command: ["ffmpeg"]
+  args:
+    - "-y"
+    - "-f"
+    - "lavfi"
+    - "-i"
+    - "testsrc=duration=5:size=640x480:rate=30"
+    - "-c:v"
+    - "libx264"
+    - "-preset"
+    - "ultrafast"
+    - "-f"
+    - "null"
+    - "-"
+  retries: 0

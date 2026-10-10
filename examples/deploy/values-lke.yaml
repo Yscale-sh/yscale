@@ -1,0 +1,22 @@
+# Helm values overlay for yscale-agent on a Linode Kubernetes Engine (LKE) cluster.
+
+# SaaS Agent Endpoint
+endpoint: "wss://api.yscale.sh"
+
+# Use an existing Secret containing YSCALE_TOKEN. SaaS mints the mesh key.
+existingSecret: "yscale-agent-secrets"
+
+# Map onto the linode cloudProvider configuration
+cloudProvider: "linode"
+
+# Namespaced RBAC is preferred as the default scope
+rbac:
+  create: true
+  scope: "namespaced"
+  allowedNamespaces:
+    - "default"
+
+# Control-plane API server endpoint as reachable from burst nodes (via Tailscale tailnet).
+# Operator must replace this with the real LKE API hostname; managed APIs normally use 443.
+bootstrap:
+  apiserverURL: "https://lke-api.example.invalid:443"

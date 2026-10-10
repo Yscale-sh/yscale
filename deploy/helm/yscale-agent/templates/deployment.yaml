@@ -1,0 +1,425 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-yscale-agent
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "yscale-agent.labels" . | nindent 4 }}
+    app.kubernetes.io/component: cluster-connector
+spec:
+  replicas: 1
+  # Recreate (not RollingUpdate): two replicas would double-ack
+  # central commands (cluster_id is the primary key on the central
+  # side) and would race for the tailscale device hostname. Surge
+  # updates would briefly run two pods on the tailnet at once.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "yscale-agent.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "yscale-agent.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: cluster-connector
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "yscale-agent.serviceAccountName" . }}
+      automountServiceAccountToken: true
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.priorityClassName }}
+      priorityClassName: {{ .Values.priorityClassName }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      # DNS resilience: hardcode yscale-cloud Service hostnames into
+      # /etc/hosts so the agent's HTTP POST to central does NOT depend
+      # on cluster CoreDNS. CoreDNS routinely crashloops on homelab
+      # (port-53 contention with k3s servicelb when an adguard-dns
+      # LoadBalancer is up), and the agent's central-submission path
+      # is the choke-point for every Workload CR. Same pattern the
+      # gateway already uses.
+      # When the in-cluster yscale-cloud Service ClusterIP is known,
+      # the rendered manifest pins it; otherwise hostAliases is empty
+      # and we fall back to DNS.
+      {{- $central := lookup "v1" "Service" .Release.Namespace "yscale-cloud" }}
+      {{- if and $central $central.spec.clusterIP }}
+      hostAliases:
+        - ip: {{ $central.spec.clusterIP | quote }}
+          hostnames:
+            - yscale-cloud.yscale
+            - yscale-cloud.yscale.svc
+            - yscale-cloud.yscale.svc.cluster.local
+      {{- end }}
+      # Both containers share the Pod's network namespace. The tailscale
+      # sidecar joins yscale's tailnet so the agent is reachable from
+      # burst nodes by MagicDNS at hostname `yscale-agent-<cluster-id>`.
+      #
+      # The init container fetches a fresh tailnet auth key from central
+      # on every pod boot — customers never hand-mint or rotate tskey-
+      # auth-* keys themselves. YSCALE_TOKEN is the only customer secret.
+      # See central/internal/handlers/agent_auth.go for the mint path.
+      {{- if not .Values.tailscale.authKeySecret.name }}
+      initContainers:
+        - name: ts-auth-fetch
+          image: curlimages/curl:8.10.1
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              # Central's endpoint is ws://... or wss://... in the chart
+              # values (re-used by the agent's WS client); swap scheme
+              # for HTTP. Same host + port serves both.
+              HTTP_ENDPOINT=$(echo "$YSCALE_ENDPOINT" | sed -e 's|^ws://|http://|' -e 's|^wss://|https://|')
+              echo "[ts-auth] mint endpoint: $HTTP_ENDPOINT/v1/agent/ts-auth-key"
+
+              # Retry up to 30s — central may be transient-unreachable
+              # right after a cluster restart. If we can't reach it the
+              # pod stays in init forever, which is the right failure
+              # mode (sidecar would crashloop with no auth key anyway).
+              ATTEMPT=0
+              while [ $ATTEMPT -lt 10 ]; do
+                ATTEMPT=$((ATTEMPT+1))
+                if curl -fsS -X POST \
+                    -H "Authorization: Bearer $YSCALE_TOKEN" \
+                    -H "X-Cluster-ID: $CLUSTER_ID" \
+                    -H "Content-Type: application/json" \
+                    -o /etc/tailscale-auth/response.json \
+                    "$HTTP_ENDPOINT/v1/agent/ts-auth-key"; then
+                  break
+                fi
+                echo "[ts-auth] attempt $ATTEMPT failed, retrying in 3s"
+                sleep 3
+              done
+
+              # Extract auth_key without jq dependency.
+              AUTH_KEY=$(awk -F'"' '/"auth_key"/ {print $4}' /etc/tailscale-auth/response.json)
+              if [ -z "$AUTH_KEY" ]; then
+                echo "[ts-auth] FATAL: no auth_key in response"
+                cat /etc/tailscale-auth/response.json
+                exit 1
+              fi
+              printf '%s' "$AUTH_KEY" > /etc/tailscale-auth/TS_AUTHKEY
+              chmod 0400 /etc/tailscale-auth/TS_AUTHKEY
+              # Alternative / self-hosted coordination server: central returns login_server
+              # in the mint response when this deployment points at its own
+              # coordination server. Empty/absent => shared Tailscale SaaS (no --login-server),
+              # so the sidecar's `tailscale up` stays byte-for-byte unchanged.
+              # login_server is the LAST field of the response, so the awk $4
+              # trick used for auth_key won't work; anchor on the field name.
+              LOGIN_SERVER=$(sed -n 's/.*"login_server":"\([^"]*\)".*/\1/p' /etc/tailscale-auth/response.json || true)
+              if [ -n "$LOGIN_SERVER" ]; then
+                printf '%s' "$LOGIN_SERVER" > /etc/tailscale-auth/TS_LOGIN_SERVER
+                echo "[ts-auth] wrote TS_LOGIN_SERVER ($LOGIN_SERVER)"
+              else
+                echo "[ts-auth] no login_server in mint response (shared Tailscale SaaS)"
+              fi
+              rm -f /etc/tailscale-auth/response.json
+              echo "[ts-auth] auth key written; hostname=yscale-agent-$CLUSTER_ID"
+          env:
+            - name: YSCALE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.existingSecret }}{{ .Values.existingSecret }}{{ else }}{{ .Release.Name }}-yscale-agent-token{{ end }}
+                  key: YSCALE_TOKEN
+            - name: YSCALE_ENDPOINT
+              value: "{{ .Values.endpoint }}"
+            - name: CLUSTER_ID
+              value: "{{ include "yscale-agent.clusterID" . }}"
+          volumeMounts:
+            - { name: tailscale-auth, mountPath: /etc/tailscale-auth }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            capabilities:
+              drop: [ALL]
+      {{- end }}
+      containers:
+        # ---- Cluster Connector (unprivileged container; enumerated K8s RBAC) ----
+        - name: agent
+          image: {{ include "yscale-agent.agentImage" . | quote }}
+          imagePullPolicy: {{ .Values.agent.image.pullPolicy }}
+          {{- include "yscale-agent.validateCloudProvider" . }}
+          args:
+            - "-endpoint={{ .Values.endpoint }}"
+            {{- if .Values.bootstrap.enabled }}
+            - "-bootstrap-listen={{ include "yscale-agent.bootstrapListen" . }}"
+            - "-bootstrap-auth-mode={{ .Values.bootstrap.authMode }}"
+            {{- if eq .Values.bootstrap.authMode "eks" }}
+            - "-eks-cluster-name={{ required "bootstrap.eks.clusterName is required when bootstrap.authMode=eks" .Values.bootstrap.eks.clusterName }}"
+            - "-eks-region={{ required "bootstrap.eks.region is required when bootstrap.authMode=eks" .Values.bootstrap.eks.region }}"
+            - "-eks-bootstrap-role-arn={{ required "bootstrap.eks.bootstrapRoleARN is required when bootstrap.authMode=eks" .Values.bootstrap.eks.bootstrapRoleARN }}"
+            {{- end }}
+            {{- if and (ne .Values.bootstrap.authMode "kubernetes-token") (ne .Values.bootstrap.authMode "eks") (ne .Values.bootstrap.authMode "gke") }}
+            {{- fail (printf "bootstrap.authMode=%q is not one of: kubernetes-token, eks, gke" .Values.bootstrap.authMode) }}
+            {{- end }}
+            {{- else }}
+            - "-disable-bootstrap"
+            {{- end }}
+            - "-state-dir=/var/lib/yscale"
+            # Stable clusterID. The tailscale sidecar reads TS_HOSTNAME
+            # *at pod start* (Helm-template time, not runtime), so it
+            # MUST be non-empty here. Otherwise the sidecar registers on
+            # the tailnet as `yscale-agent-REPLACE-AT-RUNTIME` and
+            # bursts can't MagicDNS-resolve the bootstrap endpoint (Bug
+            # 8 from the LKE smoke-test). Derives a stable value from
+            # release metadata when caller doesn't override — preserves
+            # backwards compatibility with installs that never set
+            # clusterID (e.g. the operator's homelab k3s).
+            - "-cluster-id={{ include "yscale-agent.clusterID" . }}"
+            # Cloud-provider awareness — agent forwards these to central
+            # in its Hello message so central can stamp the right
+            # CLUSTER_DNS / providerID on bursts. Helpers in _helpers.tpl
+            # derive defaults from .Values.cloudProvider when fields are
+            # empty. Central-side consumption lands in a future PR; for
+            # now the agent records them and they're visible via
+            # `kubectl describe pod` for operator diagnostics.
+            {{- if .Values.cloudProvider }}
+            - "-cloud-provider={{ .Values.cloudProvider }}"
+            {{- end }}
+            - "-cluster-dns={{ include "yscale-agent.clusterDNS" . }}"
+            - "-cluster-domain={{ .Values.cluster.domain }}"
+            {{- $pidFmt := include "yscale-agent.burstProviderIDFormat" . }}
+            {{- if and .Values.burst.providerIDOverride.enabled $pidFmt }}
+            - "-burst-provider-id-format={{ $pidFmt }}"
+            {{- end }}
+            # Pass the gateway boolean explicitly so chart opt-out still
+            # overrides the agent binary's default-on flag.
+            - "-gateway-enabled={{ .Values.gateway.enabled }}"
+            # When the gateway sidecar is deployed, the agent also receives
+            # its hostname and advertised routes for burst bootstrap.
+            {{- if .Values.gateway.enabled }}
+            {{- /* Same resolution as gateway-deployment.yaml: advertiseRoutes is canonical, customerPodCIDRs is the deprecated alias. */}}
+            {{- $gatewayRoutes := default (default (list) .Values.gateway.customerPodCIDRs) .Values.gateway.advertiseRoutes }}
+            - "-gateway-hostname=yscale-gateway-{{ include "yscale-agent.clusterID" . }}"
+            - "-gateway-routes={{ join "," $gatewayRoutes }}"
+            {{- end }}
+            {{- /* Scope Workload-CR + pending-pod watching to one namespace when
+                   multiple agents share one cluster (separate teams).
+                   Empty (default) watches all namespaces — the normal single install. */}}
+            {{- if .Values.workloadNamespace }}
+            - "-workload-namespace={{ .Values.workloadNamespace }}"
+            {{- end }}
+            {{- /* The default namespaced RBAC cannot list Jobs or Pods at cluster
+                   scope. Give the connector the exact namespace allowlist the
+                   Roles below grant: inventory, drain and the Job, pod and
+                   pending-pod watchers run in each of them. Cluster-scope
+                   installs keep the empty value that means one cluster-wide
+                   LIST/WATCH. */}}
+            {{- if eq .Values.rbac.scope "namespaced" }}
+            - "-pod-inventory-namespaces={{ join "," .Values.rbac.allowedNamespaces }}"
+            {{- end }}
+            {{- /* Idle teardown for nodeOnly (KEDA/Deployment) bursts. Always
+                   rendered so the deployed grace is visible in the pod spec,
+                   including the 0 that disables it. The connector itself
+                   refuses to run the watcher without cluster-wide pod
+                   visibility — see IdleNodeWatcher.Run — so the values never
+                   have to be kept consistent by hand here. */}}
+            - "-idle-node-grace={{ .Values.idleTeardown.grace }}"
+            {{- /* Liveness for nodeOnly capacity: central expires a nodeOnly burst
+                   that has gone unobserved for its ceiling, and the only thing
+                   that counts as an observation is the connector proving it can
+                   still read the whole cluster's pods. Node health is not that,
+                   and a connector without that visibility sends none of these at
+                   all. Must stay well under YSCALE_NODE_ONLY_MAX_LIFETIME on the
+                   central side. */}}
+            - "-occupancy-observe-interval={{ .Values.occupancyObserveInterval }}"
+            {{- /* Whether this connector was actually GRANTED the cluster-wide pod
+                   LIST the idle watcher's every claim rests on. It is computed
+                   from the RBAC this same chart renders, never assumed: an empty
+                   workloadNamespace says nobody scoped the connector, not that its
+                   Role can read the cluster's pods, and the default scope here is
+                   namespaced. Rendered either way so the deployed answer is
+                   visible in the pod spec.
+
+                   Cluster scope alone is not enough either — a cluster-scoped
+                   connector pinned to one workloadNamespace still watches only
+                   that namespace's Workload CRs, and "idle" is a claim about all
+                   of them. Do NOT widen the namespaced role with a cluster-wide
+                   Pod read to make this true; the namespaced default is the
+                   supported shared-cluster topology, and its nodeOnly workloads
+                   are bounded by their declared budget instead. */}}
+            {{- if and (eq .Values.rbac.scope "cluster") (not .Values.workloadNamespace) }}
+            - "-authoritative-pod-visibility=true"
+            {{- else }}
+            - "-authoritative-pod-visibility=false"
+            {{- end }}
+          env:
+            - name: YSCALE_AGENT_IMAGE
+              value: {{ include "yscale-agent.agentImage" . | quote }}
+            - name: YSCALE_AGENT_PULL_SECRETS
+              value: {{ toJson .Values.imagePullSecrets | quote }}
+            - name: YSCALE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.existingSecret }}{{ .Values.existingSecret }}{{ else }}{{ .Release.Name }}-yscale-agent-token{{ end }}
+                  key: YSCALE_TOKEN
+            {{- if .Values.tailscale.outboundHTTPProxy.enabled }}
+            - name: HTTP_PROXY
+              value: "http://{{ .Values.tailscale.outboundHTTPProxy.listen }}"
+            - name: HTTPS_PROXY
+              value: "http://{{ .Values.tailscale.outboundHTTPProxy.listen }}"
+            - name: NO_PROXY
+              value: {{ .Values.tailscale.outboundHTTPProxy.noProxy | quote }}
+            {{- end }}
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            # Override the apiserver URL the agent stamps into burst
+            # bootstrap-kubeconfigs. Points at the k3s control-plane's
+            # tailnet hostname — the apiserver cert SAN already lists
+            # this name (k3s adds the node's hostname), so kubelet's
+            # post-bootstrap kubeconfig (which loses the tls-server-name
+            # override) still validates correctly. Burst nodes are on
+            # the same tailnet and reach this via MagicDNS.
+            - name: BOOTSTRAP_APISERVER_URL
+              value: "{{ .Values.bootstrap.apiserverURL }}"
+          volumeMounts:
+            - { name: state, mountPath: /var/lib/yscale }
+          resources:
+            {{- toYaml .Values.agent.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+        # ---- tailscale sidecar ----
+        # Joins yscale's tailnet using a customer-specific ephemeral
+        # auth key. Sets the device hostname to `yscale-agent-<cluster-id>`
+        # so MagicDNS resolves it from burst nodes.
+        - name: tailscale
+          image: {{ .Values.tailscale.image.repository }}:{{ .Values.tailscale.image.tag }}
+          imagePullPolicy: {{ .Values.tailscale.image.pullPolicy }}
+          # containerboot reads TS_AUTHKEY from env, but we want the
+          # auth key to come from the init-container-written file so
+          # the customer's Secret never has to hold a tskey-auth-*.
+          # Wrap with a tiny shell that sources the file into env then
+          # execs containerboot — preserving its TS_SERVE_CONFIG /
+          # TS_HOSTNAME / TS_USERSPACE handling.
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              if [ ! -r /etc/tailscale-auth/TS_AUTHKEY ]; then
+                echo "FATAL: /etc/tailscale-auth/TS_AUTHKEY missing — init container failed?" >&2
+                exit 1
+              fi
+              export TS_AUTHKEY="$(cat /etc/tailscale-auth/TS_AUTHKEY)"
+              # Alternative / self-hosted coordination server: if the init container
+              # captured a login_server, point this device at it via `tailscale up
+              # --login-server`. containerboot forwards TS_EXTRA_ARGS to
+              # `tailscale up`, and TS_EXTRA_ARGS already carries
+              # --advertise-tags (env below), so we append. Empty file /
+              # absent => fail closed in the default managed-mesh release.
+              TS_LOGIN_SERVER="$(cat /etc/tailscale-auth/TS_LOGIN_SERVER 2>/dev/null || true)"
+              [ -n "$TS_LOGIN_SERVER" ] || TS_LOGIN_SERVER="{{ .Values.tailscale.tsLoginServer | default "" }}"
+              {{- if .Values.managedMesh }}
+              if [ -z "$TS_LOGIN_SERVER" ]; then
+                echo "FATAL: managed mesh requires a login server; wait for tenant fabric or set tailscale.tsLoginServer"
+                exit 1
+              fi
+              {{- end }}
+              if [ -n "$TS_LOGIN_SERVER" ]; then
+                export TS_EXTRA_ARGS="${TS_EXTRA_ARGS:-} --login-server=$TS_LOGIN_SERVER"
+                echo "[ts] login-server: $TS_LOGIN_SERVER"
+              fi
+              exec /usr/local/bin/containerboot
+          env:
+            - name: TS_HOSTNAME
+              value: "yscale-agent-{{ include "yscale-agent.clusterID" . }}"
+            # Tags only — NO --advertise-routes. Subnet-routing the
+            # cluster service CIDR (10.43.0.0/16) from this pod conflicts
+            # with the pod's own DNS to kube-dns at 10.43.0.10. Burst
+            # reachability to kube-apiserver is solved via `tailscale
+            # serve` instead (see lifecycle.postStart below).
+            - name: TS_EXTRA_ARGS
+              value: "--advertise-tags={{ .Values.tailscale.tags }}{{ if .Values.tailscale.acceptRoutes }} --accept-routes{{ end }}"
+            - name: TS_KUBE_SECRET
+              value: ""
+            # Userspace mode (no kernel netfilter changes -> no host
+            # iptables poisoning). `tailscale serve` (TS_SERVE_CONFIG
+            # below) forwards inbound tailnet TCP to local destinations.
+            - name: TS_USERSPACE
+              value: "true"
+            {{- if .Values.tailscale.outboundHTTPProxy.enabled }}
+            - name: TS_OUTBOUND_HTTP_PROXY_LISTEN
+              value: {{ .Values.tailscale.outboundHTTPProxy.listen | quote }}
+            {{- end }}
+            # TCP-forward config: the tailnet-side bootstrap.port ->
+            # wherever the agent bound it in this pod. Both ends are
+            # rendered from bootstrap.port / bootstrap.listenMode; see
+            # templates/tailscale-serve.yaml.
+            - name: TS_SERVE_CONFIG
+              value: /etc/tailscale-serve/serve.json
+          securityContext:
+            runAsUser: 1000
+            runAsGroup: 1000
+          volumeMounts:
+            - { name: tailscale-serve, mountPath: /etc/tailscale-serve, readOnly: true }
+            - { name: tailscale-auth,  mountPath: /etc/tailscale-auth,  readOnly: true }
+            # Persist tailscaled.state across CONTAINER-only restarts so the
+            # sidecar RESUMES its (non-ephemeral, still-registered) device
+            # instead of re-authing with the init-minted key. That key expires
+            # ~30 min after pod boot, and the init only re-mints on POD restart,
+            # so without this a container-only restart past the TTL crash-loops
+            # forever (this is exactly what took the burst path down 2.5 days,
+            # 2026-07-20). emptyDir is pod-scoped: wiped on POD replacement, so
+            # the init re-mint + central's delete-and-remint still fire as
+            # intended. Mirrors the gateway sidecar's proven pattern.
+            - { name: tailscale-state, mountPath: /var/lib/tailscale }
+          resources:
+            {{- toYaml .Values.tailscale.resources | nindent 12 }}
+      volumes:
+        # Serve config for the tailscale sidecar: TCP-forward inbound
+        # tailnet traffic to local destinations (agent + kube-apiserver).
+        - name: tailscale-serve
+          configMap:
+            name: {{ .Release.Name }}-yscale-agent-tailscale-serve
+        # Shared emptyDir: init container writes TS_AUTHKEY here,
+        # sidecar reads it. tmpfs-backed so the key never hits disk.
+        - name: tailscale-auth
+          {{- if .Values.tailscale.authKeySecret.name }}
+          secret:
+            secretName: {{ .Values.tailscale.authKeySecret.name }}
+            items:
+              - key: {{ .Values.tailscale.authKeySecret.key }}
+                path: TS_AUTHKEY
+          {{- else }}
+          emptyDir:
+            medium: Memory
+            sizeLimit: 1Mi
+          {{- end }}
+        # tailscaled.state for the sidecar — survives a container-only restart,
+        # wiped on pod replacement (see the sidecar's /var/lib/tailscale mount).
+        - name: tailscale-state
+          emptyDir: {}
+        # Persistent state: cluster-id.
+        - name: state
+          {{- if and .Values.persistence.enabled (ne .Values.persistence.storageClass "-") }}
+          persistentVolumeClaim:
+            claimName: {{ .Release.Name }}-yscale-agent-state
+          {{- else }}
+          emptyDir: {}
+          {{- end }}

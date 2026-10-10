@@ -1,0 +1,245 @@
+{{- if .Values.subnetRouter.enabled -}}
+# Per-node Tailscale subnet router. One pod per cluster node, hostNetwork:true,
+# CAP_NET_ADMIN, runs `tailscale up --advertise-routes=<that node's pod CIDR>
+# --accept-routes`. Together with the burst-side `tailscale up
+# --advertise-routes=<burst pod CIDR>` (in burst/image/entrypoint-kubelet.sh)
+# this carries pod-CIDR routing in BOTH directions across the tailnet —
+# the joined-CNI primitive described in docs/JOINED-CNI.md.
+#
+# Implementation notes:
+#   * The upstream `tailscale/tailscale` image's containerboot reads only
+#     a fixed set of TS_* env vars; it does NOT support a per-pod
+#     route-resolution script. We override `command:` and run our own
+#     resolver + `tailscaled` + `tailscale up`, mirroring the pattern
+#     proven on the burst side in burst/image/entrypoint-kubelet.sh.
+#   * TS_AUTHKEY is mounted as a 0400 file (NOT injected as env), so the
+#     key never appears in `kubectl describe pod` or /proc/<pid>/environ.
+#     `tailscale up --auth-key-file=...` consumes the file directly.
+#   * `spec.podCIDR` is resolved via apiserver REST using the in-pod
+#     ServiceAccount token. We grep-parse the JSON rather than depend on
+#     `jq` (not in the stock tailscale image). Pattern is unambiguous —
+#     `spec.podCIDR` is a single string field with a fixed shape.
+#   * If the customer's cluster does NOT assign per-node spec.podCIDR
+#     (e.g. EKS VPC CNI, some Calico setups), the DaemonSet fails loud
+#     with a clear error instead of silently no-op'ing.
+#
+# Disable on clusters that already run host-level tailscaled (e.g. a
+# homelab node); setting up tailscaled in a Pod with kernel mode there
+# breaks host iptables. Customers without host tailscaled leave this
+# enabled (the default).
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ .Release.Name }}-yscale-agent-subnet-router
+  labels:
+    {{- include "yscale-agent.labels" . | nindent 4 }}
+    app.kubernetes.io/component: subnet-router
+spec:
+  selector:
+    matchLabels:
+      {{- include "yscale-agent.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: subnet-router
+  template:
+    metadata:
+      labels:
+        {{- include "yscale-agent.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: subnet-router
+    spec:
+      # Run on every node (control-plane + workers). Tolerate any taint
+      # so the pod CIDR of control-plane nodes also gets advertised.
+      tolerations:
+        - operator: Exists
+      hostNetwork: true
+      hostPID: true
+      dnsPolicy: ClusterFirstWithHostNet
+      serviceAccountName: {{ .Release.Name }}-yscale-agent-subnet-router
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: tailscale-router
+          image: {{ .Values.subnetRouter.image.repository }}:{{ .Values.subnetRouter.image.tag }}
+          imagePullPolicy: {{ .Values.subnetRouter.image.pullPolicy }}
+          securityContext:
+            privileged: false
+            capabilities:
+              add: [NET_ADMIN, NET_RAW]
+          env:
+            - name: NODE_NAME
+              valueFrom: { fieldRef: { fieldPath: spec.nodeName } }
+            {{- if .Values.subnetRouter.tsLoginServer }}
+            - name: TS_LOGIN_SERVER
+              value: {{ .Values.subnetRouter.tsLoginServer | quote }}
+            {{- end }}
+          # Override containerboot. The shell script below resolves this
+          # node's spec.podCIDR via the apiserver, starts tailscaled, and
+          # runs `tailscale up --auth-key-file=... --advertise-routes=...`.
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              SA_TOKEN_FILE=/var/run/secrets/kubernetes.io/serviceaccount/token
+              SA_CA_FILE=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+              AUTH_KEY_FILE=/etc/tailscale-auth/TS_AUTHKEY
+
+              [ -r "$SA_TOKEN_FILE" ] || { echo "FATAL: ServiceAccount token not mounted at $SA_TOKEN_FILE" >&2; exit 1; }
+              [ -r "$AUTH_KEY_FILE" ] || { echo "FATAL: TS_AUTHKEY not mounted at $AUTH_KEY_FILE" >&2; exit 1; }
+
+              # Resolve this node's spec.podCIDR via apiserver REST. We
+              # grep the JSON because `jq` isn't in the stock tailscale
+              # image and apk-add at runtime adds boot latency. The
+              # pattern is unambiguous: spec.podCIDR is a single string
+              # field. Falls back to first matching podCIDR if multiple
+              # CIDRs are present (podCIDRs[] for dual-stack).
+              echo "[router] resolving spec.podCIDR for node=$NODE_NAME via apiserver..."
+              # BusyBox wget in the stock tailscale image lacks
+              # `--ca-certificate=`. We use `--no-check-certificate`
+              # and rely on the SA bearer token for auth; the
+              # `kubernetes.default.svc` endpoint is reached over
+              # the cluster's pod network where a MITM would require
+              # cluster-internal privilege already.
+              NODE_JSON=$(
+                wget -q -O - \
+                  --header="Authorization: Bearer $(cat "$SA_TOKEN_FILE")" \
+                  --no-check-certificate \
+                  "https://kubernetes.default.svc/api/v1/nodes/${NODE_NAME}"
+              ) || { echo "FATAL: apiserver query failed for node $NODE_NAME" >&2; exit 1; }
+
+              POD_CIDR=$(printf '%s' "$NODE_JSON" \
+                | grep -oE '"podCIDR"[[:space:]]*:[[:space:]]*"[^"]+"' \
+                | head -1 \
+                | sed -E 's/.*"podCIDR"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/')
+
+              if [ -z "${POD_CIDR:-}" ]; then
+                cat >&2 <<EOF
+              FATAL: node "$NODE_NAME" has no spec.podCIDR set.
+                This usually means the cluster uses an external IPAM that
+                bypasses kube-controller-manager's NodeIpamController —
+                common cases:
+                  * EKS with the AWS VPC CNI (pods get VPC IPs, no per-node podCIDR)
+                  * Calico in "non-K8s IPAM" mode
+                  * Cilium with native IPAM and no podCIDRs
+                yscale's joined-CNI subnet router requires spec.podCIDR
+                to know what to advertise into the tailnet. Options:
+                  1. Run yscale-agent with subnetRouter.enabled=false
+                     (selector-only mode; bursts work as kubelet nodes,
+                     but customer pods cannot reach burst pods directly).
+                  2. Configure your CNI to populate spec.podCIDR per node.
+                See docs/JOINED-CNI.md for details.
+              EOF
+                exit 1
+              fi
+
+              echo "[router] node=$NODE_NAME advertising route=$POD_CIDR"
+
+              # Start tailscaled in background. `env -u` scrubs any
+              # inherited TS_AUTHKEY (we don't pass one, but defense in
+              # depth: containerboot wrappers sometimes inject it).
+              mkdir -p /var/lib/tailscale /var/run/tailscale
+              env -u TS_AUTHKEY tailscaled \
+                --state=/var/lib/tailscale/tailscaled.state \
+                --socket=/var/run/tailscale/tailscaled.sock \
+                --tun=tailscale0 &
+              TAILSCALED_PID=$!
+
+              # Forward SIGTERM/SIGINT to tailscaled so pod terminates clean.
+              trap 'kill -TERM "$TAILSCALED_PID" 2>/dev/null || true; wait "$TAILSCALED_PID" 2>/dev/null || true; exit 0' TERM INT
+
+              # Wait for tailscaled socket (typically <2s).
+              for _ in 1 2 3 4 5 6 7 8 9 10; do
+                [ -S /var/run/tailscale/tailscaled.sock ] && break
+                sleep 1
+              done
+              [ -S /var/run/tailscale/tailscaled.sock ] || { echo "FATAL: tailscaled socket never appeared" >&2; exit 1; }
+
+              # Bring up. The `file:` prefix on --auth-key tells the
+              # CLI to read the value from a file (NOT --auth-key-file
+              # which doesn't exist), so the secret never appears in
+              # `ps aux` like a literal --auth-key=$VAR would. --reset
+              # clears any stale state from prior pod incarnations on
+              # this node.
+              TS_UP_ARGS="--auth-key=file:$AUTH_KEY_FILE
+                          --hostname=yscale-router-${NODE_NAME}
+                          --advertise-routes=${POD_CIDR}
+                          --accept-routes
+                          --advertise-tags=tag:yscale
+                          --reset"
+              if [ -n "${TS_LOGIN_SERVER:-}" ]; then
+                TS_UP_ARGS="$TS_UP_ARGS --login-server=$TS_LOGIN_SERVER"
+              fi
+
+              # shellcheck disable=SC2086
+              tailscale up $TS_UP_ARGS
+
+              echo "[router] tailscale up complete. blocking on tailscaled."
+              wait "$TAILSCALED_PID"
+          resources:
+            {{- toYaml .Values.subnetRouter.resources | nindent 12 }}
+          volumeMounts:
+            - name: tailscale-state
+              mountPath: /var/lib/tailscale
+            - name: tailscale-runtime
+              mountPath: /var/run/tailscale
+            - name: dev-net-tun
+              mountPath: /dev/net/tun
+            - name: tailscale-auth
+              mountPath: /etc/tailscale-auth
+              readOnly: true
+      volumes:
+        - name: tailscale-state
+          hostPath:
+            path: /var/lib/tailscale-yscale-router
+            type: DirectoryOrCreate
+        - name: tailscale-runtime
+          emptyDir: {}
+        - name: dev-net-tun
+          hostPath:
+            path: /dev/net/tun
+            type: CharDevice
+        # Mount TS_AUTHKEY as a 0400 file — NOT injected as env. This
+        # closes the env-leak vector flagged in iter 10 + task #21:
+        # `kubectl describe pod` and /proc/<pid>/environ never see the
+        # key. `tailscale up --auth-key-file=...` reads it directly.
+        - name: tailscale-auth
+          secret:
+            secretName: {{ if .Values.subnetRouter.authKeySecret.name -}}
+                          {{ .Values.subnetRouter.authKeySecret.name }}
+                        {{- else -}}
+                          {{ .Release.Name }}-yscale-agent-subnet-router
+                        {{- end }}
+            defaultMode: 0400
+            items:
+              - key: {{ .Values.subnetRouter.authKeySecret.key }}
+                path: TS_AUTHKEY
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Release.Name }}-yscale-agent-subnet-router
+  labels:
+    {{- include "yscale-agent.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ .Release.Name }}-yscale-agent-subnet-router
+rules:
+  # Read this node's spec.podCIDR. Scoped to Nodes only.
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ .Release.Name }}-yscale-agent-subnet-router
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ .Release.Name }}-yscale-agent-subnet-router
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Release.Name }}-yscale-agent-subnet-router
+    namespace: {{ .Release.Namespace }}
+{{- end -}}

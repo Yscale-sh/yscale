@@ -1,0 +1,367 @@
+{{- if .Values.gateway.enabled -}}
+{{- /*
+Gateway sidecar Deployment.
+
+Carries cross-cluster pod-to-pod traffic between bursts and the
+customer cluster's pod network. Bursts route 10.42.0.0/16 (or
+whatever the customer pod CIDR is) via the tailnet; this Deployment
+terminates that tailnet route in pod-network and forwards the
+packets onto the customer CNI, masquerading them to its own pod IP.
+
+That SNAT is the return path, and nothing here may disable it. The
+customer CNI has no route for the burst pod supernet 10.244.0.0/16, so
+a reply addressed to the burst's real IP is undeliverable; addressed to
+the gateway it is ordinary pod-to-pod traffic, and conntrack here undoes
+the rewrite and sends it back over the tailnet, where the burst's own
+advertised /24 is in that peer's AllowedIPs. Do NOT add
+--snat-subnet-routes=false: burst->cluster traffic still arrives and the
+customer pod still answers, but the reply is black-holed, and it looks
+like a one-way network rather than a config error. tailscaled's
+subnet-router default (NoSNAT: false) is what installs the rule, which
+is why no flag here turns it on. The cost is source identity: in-cluster
+policy sees this gateway, not the individual burst.
+
+Operator prerequisite: a one-time tailnet ACL setup granting this
+chart's tags — tagOwners for tag:yscale-gateway, plus an
+autoApprovers.routes entry for the pod CIDR you advertise.
+
+Single replica, pod-network (NOT hostNetwork). Pod-network isolates the
+in-pod tailscale0 interface from any host tailscaled running on the
+underlying node (homelab nodes do; running tailscale in kernel-mode in a
+hostNetwork pod conflicts with the host's iptables).
+
+The init container `ts-auth-fetch` mints a fresh tailnet auth key
+via central with kind=gateway. The hostname becomes
+`yscale-gateway-${clusterID}` and the key carries `tag:yscale-gateway`
+(see central/internal/handlers/agent_auth.go).
+*/}}
+{{- /*
+Resolve the route list. `advertiseRoutes` is canonical; `customerPodCIDRs`
+is kept as a deprecated alias because the legacy field name only said
+"pod CIDR" when in practice the customer almost always wants to also
+include the Service CIDR and node LAN CIDR. Prefer whichever is non-empty;
+if both set, advertiseRoutes wins (the new name is the source of truth).
+When neither is set, the gateway reads routes from the agent-populated
+yscale-gateway-routes ConfigMap at runtime.
+*/}}
+{{- $routes := default (default (list) .Values.gateway.customerPodCIDRs) .Values.gateway.advertiseRoutes }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-yscale-agent-gateway
+  labels:
+    {{- include "yscale-agent.labels" . | nindent 4 }}
+    app.kubernetes.io/component: gateway
+spec:
+  replicas: 1
+  strategy:
+    # Recreate (not RollingUpdate): two gateway pods would both claim
+    # the same tailnet hostname, the second one would steal the
+    # device and the first crashloop until its key expires. One at
+    # a time.
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "yscale-agent.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: gateway
+  template:
+    metadata:
+      labels:
+        {{- include "yscale-agent.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: gateway
+    spec:
+      # DNS resilience: bypass cluster CoreDNS entirely. tailscaled
+      # resolves DERP/control hostnames (*.tailscale.com) at runtime,
+      # and if those lookups go through CoreDNS they fail whenever
+      # CoreDNS is crashlooping (a known failure mode when port 53
+      # contends with k3s servicelb / another LoadBalancer service).
+      # When the daemon can't reach a DERP, it marks itself offline
+      # and bursts lose the route to the customer apiserver
+      # mid-workload. Using public resolvers makes the gateway TS
+      # daemon independent of cluster control-plane health.
+      #
+      # The init container's curl to yscale-cloud.yscale:8443 still
+      # needs to reach central — handled below via hostAliases, which
+      # /etc/hosts resolves BEFORE consulting any DNS server.
+      dnsPolicy: None
+      dnsConfig:
+        nameservers:
+          - 1.1.1.1
+          - 9.9.9.9
+        options:
+          - name: ndots
+            value: "1"
+      {{- /* Central's Service may live in a different namespace than this
+      release (e.g. release in yscale-system, central Service at
+      yscale/yscale-cloud). gateway.centralServiceNamespace points this
+      lookup there; unset, it is the release namespace — the
+      single-release install, unchanged. */}}
+      {{- $central := lookup "v1" "Service" (include "yscale-agent.gatewayCentralServiceNamespace" .) "yscale-cloud" }}
+      {{- if and $central $central.spec.clusterIP }}
+      hostAliases:
+        - ip: {{ $central.spec.clusterIP | quote }}
+          hostnames:
+            - yscale-cloud.yscale
+            - yscale-cloud.yscale.svc
+            - yscale-cloud.yscale.svc.cluster.local
+      {{- end }}
+      # Don't co-schedule with host-tailscaled nodes if the operator
+      # explicitly opts out via this nodeSelector. Homelab default
+      # values can set this.
+      {{- with .Values.gateway.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.gateway.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      priorityClassName: {{ .Values.gateway.priorityClassName | default "system-cluster-critical" }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      # Enable IP forwarding at pod level via sysctls. Required for
+      # tailnet → customer-pod-network packet forwarding. Pod-level
+      # sysctls are kubernetes 1.27+ and need the kubelet flag
+      # --allowed-unsafe-sysctls=net.ipv4.ip_forward on each node
+      # that may host this pod; on most managed clusters it's the
+      # default-allowed safe set in 1.29+. If the cluster rejects
+      # this, the operator must set
+      # gateway.enableForwardingViaInitContainer=true to fall back
+      # to a privileged initContainer that runs `sysctl -w` once.
+      {{- if not .Values.gateway.enableForwardingViaInitContainer }}
+      securityContext:
+        sysctls:
+          - name: net.ipv4.ip_forward
+            value: "1"
+      {{- end }}
+      {{- if or (not .Values.gateway.authKeySecret.name) .Values.gateway.enableForwardingViaInitContainer }}
+      initContainers:
+        # Mint a fresh gateway TS auth key on every pod boot. Mirrors
+        # the agent's ts-auth-fetch initContainer in deployment.yaml
+        # but POSTs `{"kind":"gateway"}` so central returns a key
+        # tagged tag:yscale-gateway with hostname
+        # yscale-gateway-${clusterID}.
+        {{- if not .Values.gateway.authKeySecret.name }}
+        - name: ts-auth-fetch
+          image: curlimages/curl:8.10.1
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              HTTP_ENDPOINT=$(echo "$YSCALE_ENDPOINT" | sed -e 's|^ws://|http://|' -e 's|^wss://|https://|')
+              echo "[ts-auth] mint endpoint: $HTTP_ENDPOINT/v1/agent/ts-auth-key (kind=gateway)"
+
+              ATTEMPT=0
+              while [ $ATTEMPT -lt 10 ]; do
+                ATTEMPT=$((ATTEMPT+1))
+                if curl -fsS -X POST \
+                    -H "Authorization: Bearer $YSCALE_TOKEN" \
+                    -H "X-Cluster-ID: $CLUSTER_ID" \
+                    -H "Content-Type: application/json" \
+                    --data '{"kind":"gateway"}' \
+                    -o /etc/tailscale-auth/response.json \
+                    "$HTTP_ENDPOINT/v1/agent/ts-auth-key"; then
+                  break
+                fi
+                echo "[ts-auth] attempt $ATTEMPT failed, retrying in 3s"
+                sleep 3
+              done
+
+              AUTH_KEY=$(awk -F'"' '/"auth_key"/ {print $4}' /etc/tailscale-auth/response.json)
+              if [ -z "$AUTH_KEY" ]; then
+                echo "[ts-auth] FATAL: no auth_key in response"
+                cat /etc/tailscale-auth/response.json
+                exit 1
+              fi
+              printf '%s' "$AUTH_KEY" > /etc/tailscale-auth/TS_AUTHKEY
+              chmod 0400 /etc/tailscale-auth/TS_AUTHKEY
+              # Alternative / self-hosted coordination server: capture login_server from the
+              # mint response (empty/absent => shared Tailscale SaaS). The gateway
+              # container below prefers this over the static helm value.
+              LOGIN_SERVER=$(sed -n 's/.*"login_server":"\([^"]*\)".*/\1/p' /etc/tailscale-auth/response.json || true)
+              if [ -n "$LOGIN_SERVER" ]; then
+                printf '%s' "$LOGIN_SERVER" > /etc/tailscale-auth/TS_LOGIN_SERVER
+                echo "[ts-auth] wrote TS_LOGIN_SERVER ($LOGIN_SERVER)"
+              fi
+              rm -f /etc/tailscale-auth/response.json
+              echo "[ts-auth] auth key written; hostname=yscale-gateway-$CLUSTER_ID"
+          env:
+            - name: YSCALE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ if .Values.existingSecret }}{{ .Values.existingSecret }}{{ else }}{{ .Release.Name }}-yscale-agent-token{{ end }}
+                  key: YSCALE_TOKEN
+            - name: YSCALE_ENDPOINT
+              value: "{{ .Values.endpoint }}"
+            - name: CLUSTER_ID
+              value: "{{ include "yscale-agent.clusterID" . }}"
+          volumeMounts:
+            - { name: tailscale-auth, mountPath: /etc/tailscale-auth }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsUser: 1000
+            runAsGroup: 1000
+            capabilities:
+              drop: [ALL]
+        {{- end }}
+        {{- if .Values.gateway.enableForwardingViaInitContainer }}
+        # Fallback when pod-level sysctls aren't permitted by the
+        # cluster's PodSecurity policy. Uses a privileged one-shot
+        # initContainer to flip net.ipv4.ip_forward on the host
+        # kernel. This persists across container restarts because
+        # it's a host-level sysctl, NOT a pod-namespace setting.
+        # Side effect: enabling forwarding on the host affects ALL
+        # pods on that node, not just this one. Use only when
+        # pod-level sysctls are blocked.
+        - name: enable-ip-forward
+          image: busybox:1.36
+          command: ["sh", "-c", "sysctl -w net.ipv4.ip_forward=1"]
+          securityContext:
+            privileged: true
+        {{- end }}
+      {{- end }}
+      containers:
+        # tailscaled in pod-network. Caps: NET_ADMIN + NET_RAW for
+        # tun device + iptables setup. Mounts /dev/net/tun from host
+        # as a CharDevice — required to create the tailscale0
+        # interface in kernel mode. We do NOT mount /var/lib/tailscale
+        # as a hostPath: state is ephemeral (auth key is short-lived,
+        # device re-registers on each pod start), so an emptyDir
+        # is sufficient and isolates this gateway's state from any
+        # host-level tailscaled.
+        - name: tailscaled
+          image: "{{ .Values.gateway.image.repository }}:{{ .Values.gateway.image.tag }}"
+          imagePullPolicy: {{ .Values.gateway.image.pullPolicy }}
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              AUTH_KEY_FILE=/etc/tailscale-auth/TS_AUTHKEY
+              HOSTNAME="yscale-gateway-{{ include "yscale-agent.clusterID" . }}"
+              HELM_ROUTES="{{ join "," $routes }}"
+              ROUTES="$HELM_ROUTES"
+              ROUTES_FILE=/etc/yscale/routes/routes
+              # Self-hosted coordination server. Prefer the
+              # login_server central returned in the mint response (the
+              # self-hosted coordination server, written by the init container above);
+              # fall back to the static helm value. Missing discovery and
+              # static configuration fail closed in the default managed mode.
+              TS_LOGIN_SERVER="$(cat /etc/tailscale-auth/TS_LOGIN_SERVER 2>/dev/null || true)"
+              [ -n "$TS_LOGIN_SERVER" ] || TS_LOGIN_SERVER="{{ .Values.gateway.tsLoginServer | default "" }}"
+              {{- if .Values.managedMesh }}
+              if [ -z "$TS_LOGIN_SERVER" ]; then
+                echo "FATAL: managed mesh requires a login server; wait for tenant fabric or set gateway.tsLoginServer"
+                exit 1
+              fi
+              {{- end }}
+
+              [ -r "$AUTH_KEY_FILE" ] || { echo "FATAL: TS_AUTHKEY not mounted at $AUTH_KEY_FILE"; exit 1; }
+              if [ -z "$ROUTES" ]; then
+                echo "[gateway] waiting for routes in $ROUTES_FILE"
+                ROUTE_WAIT_SECONDS=120
+                ATTEMPT=0
+                while [ $ATTEMPT -lt $ROUTE_WAIT_SECONDS ]; do
+                  if [ -s "$ROUTES_FILE" ]; then
+                    ROUTES="$(tr '\n' ',' < "$ROUTES_FILE" | tr -d '[:space:]' | sed 's/,,*/,/g; s/^,//; s/,$//')"
+                    [ -n "$ROUTES" ] && break
+                  fi
+                  ATTEMPT=$((ATTEMPT+1))
+                  sleep 1
+                done
+              else
+                echo "[gateway] using explicit Helm routes"
+              fi
+              [ -n "$ROUTES" ] || { echo "FATAL: gateway routes empty after waiting for yscale-gateway-routes ConfigMap"; exit 1; }
+
+              mkdir -p /var/lib/tailscale /var/run/tailscale
+              tailscaled \
+                --state=/var/lib/tailscale/tailscaled.state \
+                --socket=/var/run/tailscale/tailscaled.sock \
+                --tun=tailscale0 &
+              TSD=$!
+              trap 'kill -TERM "$TSD" 2>/dev/null || true; wait "$TSD" 2>/dev/null || true; exit 0' TERM INT
+
+              # Wait for socket. Bounded — tailscaled boot is ~1-2s.
+              for _ in 1 2 3 4 5 6 7 8 9 10; do
+                [ -S /var/run/tailscale/tailscaled.sock ] && break
+                sleep 1
+              done
+              [ -S /var/run/tailscale/tailscaled.sock ] || { echo "FATAL: tailscaled socket never appeared"; exit 1; }
+
+              # Bring up + advertise the customer-pod-CIDR routes. The
+              # tailnet's autoApprovers.routes (see docs/oss-quickstart.md
+              # §0 for the one-time ACL setup) auto-approves
+              # these for tag:yscale-gateway so they go Active without
+              # operator clicks. Tailscale subnet routing is broadcast
+              # to every --accept-routes peer; in production deployments
+              # cluster nodes do NOT join the yscale tailnet so this is
+              # safe. ON THE HOMELAB ONLY — where the operator's host
+              # tailscale puts cluster nodes on the same tailnet — set
+              # `tailscale set --accept-routes=false` on each cluster
+              # node so they ignore this broadcast. The previous
+              # static-route attempt (no --advertise-routes; bursts
+              # install kernel routes manually) failed because
+              # tailscaled has no peer-AllowedIPs mapping for the CIDR
+              # absent an advertisement and drops the packets.
+              TS_UP_ARGS="--auth-key=file:$AUTH_KEY_FILE --hostname=$HOSTNAME --advertise-routes=$ROUTES --advertise-tags=tag:yscale-gateway --accept-routes --reset"
+              # Point at a self-hosted coordination server when set; empty (the
+              # default) keeps the SaaS invocation unchanged.
+              [ -n "$TS_LOGIN_SERVER" ] && TS_UP_ARGS="$TS_UP_ARGS --login-server=$TS_LOGIN_SERVER"
+              # shellcheck disable=SC2086 # intentional word-split of arg list
+              tailscale up $TS_UP_ARGS
+
+              echo "[gateway] tailnet up: hostname=$HOSTNAME advertised_routes=$ROUTES"
+
+              # Block on tailscaled. SIGTERM is forwarded via trap.
+              wait "$TSD"
+          securityContext:
+            capabilities:
+              add: [NET_ADMIN, NET_RAW]
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false  # tailscaled writes state
+          resources:
+            {{- toYaml .Values.gateway.resources | nindent 12 }}
+          volumeMounts:
+            - { name: tailscale-state, mountPath: /var/lib/tailscale }
+            - { name: tailscale-runtime, mountPath: /var/run/tailscale }
+            - { name: dev-net-tun, mountPath: /dev/net/tun }
+            - { name: tailscale-auth, mountPath: /etc/tailscale-auth, readOnly: true }
+            - { name: gateway-routes, mountPath: /etc/yscale/routes, readOnly: true }
+          livenessProbe:
+            # Once tailscaled has been up for a while, its socket
+            # must exist. If it doesn't, something killed the daemon
+            # and the wrapper exit-traps haven't fired — escalate to
+            # a pod restart.
+            exec:
+              command: ["sh", "-c", "[ -S /var/run/tailscale/tailscaled.sock ]"]
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            failureThreshold: 3
+      volumes:
+        - name: tailscale-state
+          emptyDir: {}
+        - name: tailscale-runtime
+          emptyDir: {}
+        - name: tailscale-auth
+          {{- if .Values.gateway.authKeySecret.name }}
+          secret:
+            secretName: {{ .Values.gateway.authKeySecret.name }}
+            items:
+              - key: {{ .Values.gateway.authKeySecret.key }}
+                path: TS_AUTHKEY
+          {{- else }}
+          emptyDir:
+            medium: Memory  # auth key never touches disk
+          {{- end }}
+        - name: gateway-routes
+          configMap:
+            name: yscale-gateway-routes
+            optional: true
+        - name: dev-net-tun
+          hostPath:
+            path: /dev/net/tun
+            type: CharDevice
+{{- end }}

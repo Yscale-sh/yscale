@@ -1,0 +1,40 @@
+# AWS full-tier pod-to-pod: an EC2 burst (us-east-1, baked AMI) joins the
+# customer cluster as a kubelet node, runs host-mode Cilium (baked into the
+# AMI; bootstrap-baked.sh launches cilium-agent for tier=full and registers
+# WITHOUT the agent-not-ready taint), and a pod on it reaches the in-cluster
+# yscale-cloud Service over the Headscale mesh via the gateway. Same proof as
+# flyio-full-podtopod, on AWS.
+#
+# Target is injected: __YSCALE_CLOUD_CLUSTERIP__ is replaced with the live
+# yscale-cloud Service ClusterIP at apply time (see testing.md §1.2a). Use
+# http:// — yscale-cloud serves plaintext on :8443 (the port is only *named*
+# https). Exits 0 only on "ok".
+apiVersion: yscale.sh/v1
+kind: Workload
+metadata:
+  name: aws-full-podtopod
+spec:
+  image: curlimages/curl:8.10.1
+  backend: aws
+  cpu: "100m"
+  memory: "128Mi"
+  networking:
+    tier: full
+  command: ["/bin/sh", "-c"]
+  args:
+    - |
+      set -e
+      TARGET="http://__YSCALE_CLOUD_CLUSTERIP__:8443/healthz"
+      echo "[aws-podtopod] GET ${TARGET}"
+      OUT=$(curl -sS --max-time 30 --retry 5 --retry-delay 3 "${TARGET}")
+      echo "[aws-podtopod] response: ${OUT}"
+      if [ "${OUT}" = "ok" ]; then
+        echo "[aws-podtopod] MARKER-OK pod-to-pod across CNI works"
+        exit 0
+      fi
+      echo "[aws-podtopod] FAILED unexpected response"
+      exit 1
+  retries: 0
+  budget:
+    maxUSD: 0.10
+    deadline: 15m

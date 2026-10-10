@@ -1,0 +1,33 @@
+# nodeOnly workload — provisions a burst node without creating a Job.
+#
+# The customer's own pods (from a Deployment, ScaledJob, Argo
+# workflow, KEDA ScaledObject, etc.) land on the burst via standard
+# K8s scheduling: nodeSelector + tolerations in the PodTemplate
+# target the yscale burst node. Yscale provides capacity; the
+# customer's tooling provides the workload.
+#
+# Use:
+#   yscale apply --dry-run -f examples/workloads/node-only.yaml
+#   yscale apply -f examples/workloads/node-only.yaml
+#
+# Once the burst joins, schedule your pods with:
+#   nodeSelector:
+#     yscale.sh/burst-node: "true"
+#   tolerations:
+#     - key: yscale.sh/burst-node
+#       operator: Exists
+#       effect: NoSchedule
+apiVersion: yscale.sh/v1
+kind: Workload
+metadata:
+  name: gpu-node-pool
+  namespace: default
+spec:
+  nodeOnly: true
+  gpu:
+    kind: l4
+    count: 1
+  size: medium
+  budget:
+    maxUSD: 5.00
+    deadline: 1h

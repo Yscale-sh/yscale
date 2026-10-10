@@ -1,0 +1,63 @@
+# Pending-pod burst trigger via a standard Deployment.
+#
+# The PendingPodWatcher sees pods stuck Pending with:
+#   1. nodeSelector: yscale.sh/burst-node=true
+#   2. annotation:   yscale.sh/burst-template (YAML-encoded burst shape)
+#
+# and submits a nodeOnly Workload to central on their behalf. Once the
+# burst node joins, the Deployment's pods schedule onto it.
+#
+# This is the integration path for KEDA ScaledObjects, Argo workflows,
+# and any controller that creates pods — they don't need to know about
+# yscale; they just target the burst-node label and carry the template
+# annotation.
+#
+# Use:
+#   kubectl apply -f examples/workloads/pending-pod-deployment.yaml
+#
+# Watch with:
+#   kubectl -n default get pods -l app=burst-inference -w
+#   kubectl -n default get workloads -w
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: burst-inference
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: burst-inference
+  template:
+    metadata:
+      labels:
+        app: burst-inference
+      annotations:
+        yscale.sh/burst-template: |
+          gpu:
+            kind: l4
+            count: 1
+          size: small
+          budget:
+            maxUSD: 2.00
+            deadline: 30m
+    spec:
+      nodeSelector:
+        yscale.sh/burst-node: "true"
+      tolerations:
+        - key: yscale.sh/burst-node
+          operator: Exists
+          effect: NoSchedule
+      containers:
+        - name: inference
+          image: nvcr.io/nvidia/cuda:12.4.1-base-ubuntu22.04
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              echo "[inference] GPU available:"
+              nvidia-smi
+              echo "[inference] serving until terminated"
+              sleep infinity
+          resources:
+            limits:
+              nvidia.com/gpu: "1"

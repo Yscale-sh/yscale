@@ -1,0 +1,26 @@
+# Scrapes central's /metrics (cost accounting) into the homelab
+# kube-prometheus-stack. The Prometheus CR selects ServiceMonitors by
+# `release: grafana` and watches all namespaces, so this lives in
+# `monitoring` but targets the yscale-cloud Service in ns `yscale`.
+#
+# NOTE: the Service port is *named* "https" but central serves PLAIN HTTP
+# on :8443 (same as /healthz) — so scheme MUST be http, not https.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: yscale-cloud-cost
+  namespace: monitoring
+  labels:
+    release: grafana
+spec:
+  namespaceSelector:
+    matchNames: ["yscale"]
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: yscale-cloud
+  endpoints:
+    - port: https        # Service port NAME (8443)
+      scheme: http        # central serves plaintext; do NOT use https
+      path: /metrics
+      interval: 30s
+      honorLabels: true

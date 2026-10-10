@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "manifest_id": "networking-lite-fixture",
+  "synthetic": true,
+  "release": {
+    "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "tested_head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "tree": "cccccccccccccccccccccccccccccccccccccccc"
+  },
+  "gates": [],
+  "supported_cells": [
+    {
+      "provider": "linode",
+      "target": "k3s",
+      "compute": "cpu",
+      "networking": "lite",
+      "status": "historically-tested",
+      "evidence": [
+        {
+          "type": "local-file",
+          "path": "internal/launch/testdata/synthetic-proof.txt",
+          "note": "networking-lite is never a supported configuration"
+        }
+      ]
+    }
+  ]
+}

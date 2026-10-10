@@ -1,0 +1,34 @@
+{
+  "name": "yscale-website",
+  "private": true,
+  "version": "0.7.0",
+  "type": "module",
+  "engines": {"node": "^20.19.0 || >=22.12.0"},
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build && node scripts/build-release-docs.mjs",
+    "test": "node --test src/lib/*.test.js",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@fontsource/archivo-black": "^5.2.8",
+    "@fontsource/azeret-mono": "^5.2.11",
+    "@fontsource/big-shoulders-display": "^5.2.5",
+    "@fontsource/bricolage-grotesque": "^5.2.10",
+    "@fontsource/dm-sans": "^5.2.8",
+    "@fontsource/hanken-grotesk": "^5.2.8",
+    "@fontsource/ibm-plex-mono": "^5.2.7",
+    "@fontsource/ibm-plex-sans": "^5.2.8",
+    "@fontsource/spline-sans": "^5.2.8",
+    "@fontsource/spline-sans-mono": "^5.2.8",
+    "@fontsource/syne": "^5.2.7",
+    "motion": "^12.42.2",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "6.1.1",
+    "markdown-it": "15.0.2",
+    "vite": "8.3.1"
+  }
+}

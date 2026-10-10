@@ -1,0 +1,64 @@
+# Ephemeral EKS cluster for validating yscale against a real managed control
+# plane. COST-MINIMIZED + THROWAWAY — do not copy these settings for anything
+# long-lived. See README.md for the cost breakdown and usage.
+apiVersion: eksctl.io/v1alpha5
+kind: ClusterConfig
+
+metadata:
+  name: yscale-eks-test
+  region: us-east-1 # matches the AWS burst AMI region so bursts join in-region
+  # Version intentionally unpinned: eksctl picks a recent default, which stays
+  # in STANDARD support ($0.10/hr). An out-of-support version silently jumps to
+  # EXTENDED support at $0.60/hr (6x). If you pin one here, keep it current.
+  tags:
+    yscale.sh/ephemeral-test: "true"
+    purpose: yscale-managed-cluster-validation
+    # Burst VMs are tracked separately via yscale-burst-id tags set by the
+    # backend, not by cluster-level run IDs.
+
+# No NAT gateway: nodes live in PUBLIC subnets and egress via the Internet
+# Gateway. Saves ~$0.045/hr and a couple minutes of create time. Acceptable for
+# a throwaway test cluster ONLY — never do this for production workloads.
+vpc:
+  nat:
+    gateway: Disable
+
+# EKS's API authenticator is the bootstrap seam for non-EC2 burst nodes.
+# Keep the legacy ConfigMap path for eksctl's managed node group while enabling
+# a narrow access entry for yscale's zero-permission bootstrap role.
+accessConfig:
+  authenticationMode: API_AND_CONFIG_MAP
+
+# The connector receives AWS credentials through its annotated ServiceAccount
+# and may only assume the dedicated bootstrap role. No long-lived AWS key is
+# copied into EKS or onto the Linode VM.
+iam:
+  withOIDC: true
+
+# Pin the current managed-node-group topology. eksctl has announced a future
+# default-on EKS Auto Mode; silently switching would change both the auth path
+# under test and its cost profile.
+autoModeConfig:
+  enabled: false
+
+# One small managed node. t3.medium (2 vCPU / 4 GiB) comfortably fits the
+# system pods (VPC CNI, CoreDNS, kube-proxy) plus the yscale-agent (+ optional
+# gateway) sidecars, which request almost nothing. Bump desiredCapacity or the
+# instanceType via the Makefile if a test needs more.
+managedNodeGroups:
+  - name: ng-test
+    instanceType: t3.medium
+    desiredCapacity: 1
+    minSize: 1
+    maxSize: 1
+    privateNetworking: false # public subnet + public IP — pairs with nat.gateway: Disable
+    volumeSize: 20
+    volumeType: gp3
+    tags:
+      yscale.sh/ephemeral-test: "true"
+
+# No CloudWatch control-plane logging — avoids log-ingestion charges on a
+# cluster that exists for minutes.
+cloudWatch:
+  clusterLogging:
+    enableTypes: []

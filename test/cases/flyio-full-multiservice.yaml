@@ -1,0 +1,61 @@
+# Joined-CNI MULTI-SERVICE routing test: prove a tier=full burst pod can
+# reach ARBITRARY in-cluster Services by ClusterIP, not just yscale-cloud.
+# Each target lives in a different namespace with a backend pod on a
+# (potentially) different node — so a pass shows Cilium kube-proxy-
+# replacement + the tailnet underlay route ALL ClusterIPs generically,
+# not one hardcoded fixture IP.
+#
+# Example targets (plain HTTP). Replace these documentation-only IPs with
+# your cluster's Service ClusterIPs before running:
+#   prometheus 192.0.2.10:9090/-/healthy   (monitoring/grafana-kube-prometheus-st-prometheus)
+#   grafana    192.0.2.11:80/api/health   (monitoring/grafana)
+#   loki       192.0.2.12:3100/ready       (loki/loki)
+#   kube-dns   192.0.2.13:9153/metrics       (kube-system/kube-dns)
+#
+# Pass criterion: every target returns a NON-000 HTTP code (000 = curl
+# never connected = routing broken). Any real HTTP status proves the
+# packet reached the service across the CNI/tailnet underlay.
+apiVersion: yscale.sh/v1
+kind: Workload
+metadata:
+  name: flyio-full-multiservice
+spec:
+  image: curlimages/curl:8.10.1
+  backend: flyio
+  cpu: "100m"
+  memory: "128Mi"
+  networking:
+    tier: full
+  command: ["/bin/sh", "-c"]
+  args:
+    - |
+      set -u
+      # name|url pairs. http_code 000 == failed to connect (routing broken).
+      TARGETS="
+      prometheus|http://192.0.2.10:9090/-/healthy
+      grafana|http://192.0.2.11:80/api/health
+      loki|http://192.0.2.12:3100/ready
+      kube-dns|http://192.0.2.13:9153/metrics
+      "
+      FAIL=0
+      for entry in $TARGETS; do
+        name="${entry%%|*}"; url="${entry#*|}"
+        [ "$name" = "$url" ] && continue
+        code=$(curl -s -o /dev/null --max-time 20 --retry 4 --retry-delay 3 -w "%{http_code}" "$url" || echo 000)
+        if [ "$code" = "000" ]; then
+          echo "[multisvc] $name $url -> UNREACHABLE (000)"
+          FAIL=1
+        else
+          echo "[multisvc] $name $url -> HTTP $code (ROUTED)"
+        fi
+      done
+      if [ "$FAIL" = "0" ]; then
+        echo "[multisvc] MARKER-OK all cluster services reachable across CNI"
+        exit 0
+      fi
+      echo "[multisvc] FAILED at least one service unreachable"
+      exit 1
+  retries: 0
+  budget:
+    maxUSD: 0.05
+    deadline: 15m

@@ -1,0 +1,17 @@
+# syntax=docker/dockerfile:1.7
+
+FROM golang:1.25.0-alpine AS build
+WORKDIR /src
+ENV CGO_ENABLED=0 GOMAXPROCS=1
+COPY go.mod go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod go mod download
+COPY . .
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    go build -p=1 -trimpath -ldflags="-s -w" -o /yscale-hosted-controller ./central/cmd/yscale-hosted-controller
+
+FROM alpine:3.21
+RUN apk add --no-cache ca-certificates && adduser -D -H -u 65532 controller
+COPY --from=build /yscale-hosted-controller /usr/local/bin/yscale-hosted-controller
+USER 65532:65532
+ENTRYPOINT ["/usr/local/bin/yscale-hosted-controller"]

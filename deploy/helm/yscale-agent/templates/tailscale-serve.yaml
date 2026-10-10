@@ -1,0 +1,34 @@
+{{- $forward := include "yscale-agent.bootstrapServeForward" . -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-yscale-agent-tailscale-serve
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "yscale-agent.labels" . | nindent 4 }}
+data:
+  # TCP-forward from the tailnet into the pod:
+  #   :<bootstrap.port> -> the agent's bootstrap + storage-signing endpoint
+  #
+  # Tailscale's containerboot reads this file (path set via TS_SERVE_CONFIG)
+  # and configures `tailscale serve` once tailscaled is up. Burst nodes dial
+  # http://yscale-agent-<cluster-id>:<bootstrap.port> and arrive here.
+  #
+  # Both the listening port and the forward target come from the same values
+  # the agent's -bootstrap-listen is rendered from, so changing bootstrap.port
+  # can't leave the forward pointing at a port nothing binds. In
+  # bootstrap.listenMode=tailnet there is no forward at all: the agent binds
+  # tailscaled's own address and inbound traffic needs no proxy.
+  #
+  # Burst→apiserver doesn't go through this proxy — bursts dial the
+  # control-plane node's tailnet hostname directly (e.g.
+  # https://<control-plane-host>:6443) where the apiserver's cert SAN matches.
+  serve.json: |
+    {
+      "TCP": {
+        {{- if $forward }}
+        "{{ .Values.bootstrap.port }}": {"HTTPS": false, "TCPForward": "{{ $forward }}"}
+        {{- end }}
+      },
+      "AllowFunnel": {}
+    }

@@ -1,0 +1,9 @@
+# Runtime burst-node image. All heavy downloads live in the base
+# (Dockerfile.kubelet.base) so this build is just an entrypoint
+# overlay — push takes ~5s.
+FROM registry.fly.io/yscale-burst-base:latest
+
+COPY entrypoint-kubelet.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]

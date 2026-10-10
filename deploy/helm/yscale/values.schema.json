@@ -1,0 +1,122 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "repository": { "type": "string", "minLength": 1 },
+        "tag": { "type": "string", "minLength": 1 },
+        "digest": { "type": "string", "pattern": "^(sha256:[0-9a-f]{64})?$" },
+        "requireDigest": { "type": "boolean" },
+        "pullPolicy": { "enum": ["Always", "IfNotPresent", "Never"] }
+      }
+    },
+    "namespace": { "type": "string", "minLength": 1 },
+    "config": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "backend": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "type": { "const": "flyio" },
+            "flyio": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "org": { "type": "string" },
+                "region": { "type": "string", "minLength": 1 },
+                "agentImage": { "type": "string" }
+              },
+              "required": ["org", "region", "agentImage"]
+            }
+          },
+          "required": ["type", "flyio"]
+        },
+        "join": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "mode": { "enum": ["k3s", "kubelet"] },
+            "k3sServerURL": { "type": "string" },
+            "apiServer": { "type": "string" },
+            "clusterCA": { "type": "string" }
+          },
+          "required": ["mode", "k3sServerURL", "apiServer", "clusterCA"]
+        },
+        "tailscale": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "tailnet": { "type": "string" },
+            "tagPrefix": { "type": "string" }
+          },
+          "required": ["enabled", "tailnet", "tagPrefix"]
+        },
+        "scaling": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "maxNodes": { "type": "integer", "minimum": 1 },
+            "scaleDownDelay": { "type": "string", "minLength": 1 },
+            "pollInterval": { "type": "string", "minLength": 1 },
+            "pendingThreshold": { "type": "string", "minLength": 1 },
+            "nodeReadyTimeout": { "type": "string", "minLength": 1 },
+            "prewarmPool": { "type": "integer", "const": 0 },
+            "maxConcurrentProvisions": { "type": "integer", "minimum": 1 },
+            "nodeResources": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "cpuMillis": { "type": "integer", "minimum": 1000 },
+                "memoryMB": { "type": "integer", "minimum": 256 }
+              },
+              "required": ["cpuMillis", "memoryMB"]
+            }
+          },
+          "required": [
+            "maxNodes",
+            "scaleDownDelay",
+            "pollInterval",
+            "pendingThreshold",
+            "nodeReadyTimeout",
+            "prewarmPool",
+            "maxConcurrentProvisions",
+            "nodeResources"
+          ]
+        },
+        "cluster": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "podCIDR": { "type": "string", "minLength": 1 },
+            "serviceCIDR": { "type": "string", "minLength": 1 },
+            "coreDNSIP": { "type": "string", "minLength": 1 }
+          },
+          "required": ["podCIDR", "serviceCIDR", "coreDNSIP"]
+        }
+      },
+      "required": ["backend", "join", "tailscale", "scaling", "cluster"]
+    },
+    "secrets": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "flyioToken": { "type": "string" },
+        "tsAuthKey": { "type": "string" },
+        "k3sToken": { "type": "string" },
+        "existingSecret": { "type": "string" }
+      }
+    },
+    "resources": { "type": "object" },
+    "nodeSelector": { "type": "object" },
+    "tolerations": { "type": "array" },
+    "affinity": { "type": "object" }
+  },
+  "required": ["image", "namespace", "config", "secrets"]
+}

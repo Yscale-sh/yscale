@@ -1,0 +1,230 @@
+{
+  "schema_version": 1,
+  "manifest_id": "synthetic-ready-fixture",
+  "synthetic": true,
+  "release": {
+    "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "tested_head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "tree": "cccccccccccccccccccccccccccccccccccccccc"
+  },
+  "release_images": [
+    {
+      "component": "cloud",
+      "ref": "example.test/synthetic/cloud@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "component": "cluster-agent",
+      "ref": "example.test/synthetic/cluster-agent@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
+    {
+      "component": "hosted-controller",
+      "ref": "example.test/synthetic/hosted-controller@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    }
+  ],
+  "gates": [
+    {
+      "id": "release-commit",
+      "required": true,
+      "status": "proven",
+      "bound_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "evidence": [
+        {"type": "local-file", "path": "internal/launch/testdata/synthetic-proof.txt", "sha256": "db3115857858e8eb66482d6074e874f9ebd97889b58e8a9c011acab5b32ce5bc", "note": "synthetic fixture proof"}
+      ]
+    },
+    {
+      "id": "post-merge-ci",
+      "required": true,
+      "status": "proven",
+      "bound_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "evidence": [
+        {"type": "local-file", "path": "internal/launch/testdata/synthetic-proof.txt", "sha256": "db3115857858e8eb66482d6074e874f9ebd97889b58e8a9c011acab5b32ce5bc", "note": "synthetic fixture proof"}
+      ]
+    },
+    {
+      "id": "image-receipts",
+      "required": true,
+      "status": "proven",
+      "bound_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "evidence": [
+        {"type": "local-file", "path": "internal/launch/testdata/synthetic-proof.txt", "sha256": "db3115857858e8eb66482d6074e874f9ebd97889b58e8a9c011acab5b32ce5bc", "note": "synthetic fixture proof"}
+      ]
+    },
+    {
+      "id": "oss-export",
+      "required": true,
+      "status": "proven",
+      "bound_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "evidence": [
+        {"type": "local-file", "path": "internal/launch/testdata/synthetic-proof.txt", "sha256": "db3115857858e8eb66482d6074e874f9ebd97889b58e8a9c011acab5b32ce5bc", "note": "synthetic fixture proof"}
+      ]
+    },
+    {
+      "id": "infra-revision",
+      "required": true,
+      "status": "proven",
+      "bound_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "evidence": [
+        {"type": "local-file", "path": "internal/launch/testdata/synthetic-proof.txt", "sha256": "db3115857858e8eb66482d6074e874f9ebd97889b58e8a9c011acab5b32ce5bc", "note": "synthetic fixture proof"}
+      ]
+    },
+    {
+      "id": "rollback-rehearsal",
+      "required": true,
+      "status": "proven",
+      "bound_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "evidence": [
+        {"type": "local-file", "path": "internal/launch/testdata/synthetic-proof.txt", "sha256": "db3115857858e8eb66482d6074e874f9ebd97889b58e8a9c011acab5b32ce5bc", "note": "synthetic fixture proof"}
+      ]
+    },
+    {
+      "id": "restore-rehearsal",
+      "required": true,
+      "status": "proven",
+      "bound_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "evidence": [
+        {"type": "local-file", "path": "internal/launch/testdata/synthetic-proof.txt", "sha256": "db3115857858e8eb66482d6074e874f9ebd97889b58e8a9c011acab5b32ce5bc", "note": "synthetic fixture proof"}
+      ]
+    },
+    {
+      "id": "provider-qualification",
+      "required": true,
+      "status": "proven",
+      "bound_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "evidence": [
+        {"type": "local-file", "path": "internal/launch/testdata/synthetic-proof.txt", "sha256": "db3115857858e8eb66482d6074e874f9ebd97889b58e8a9c011acab5b32ce5bc", "note": "synthetic fixture proof"}
+      ]
+    },
+    {
+      "id": "tenant-isolation-28",
+      "required": true,
+      "status": "proven",
+      "bound_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "evidence": [
+        {"type": "local-file", "path": "internal/launch/testdata/synthetic-proof.txt", "sha256": "db3115857858e8eb66482d6074e874f9ebd97889b58e8a9c011acab5b32ce5bc", "note": "synthetic fixture proof"}
+      ],
+      "subchecks": [
+        {
+          "id": "two-tenant-denial-live-mesh",
+          "status": "proven",
+          "evidence": [
+            {"type": "local-file", "path": "internal/launch/testdata/synthetic-proof.txt", "sha256": "db3115857858e8eb66482d6074e874f9ebd97889b58e8a9c011acab5b32ce5bc", "note": "synthetic subcheck proof"}
+          ]
+        },
+        {
+          "id": "admission-cap-concurrency",
+          "status": "proven",
+          "evidence": [
+            {"type": "local-file", "path": "internal/launch/testdata/synthetic-proof.txt", "sha256": "db3115857858e8eb66482d6074e874f9ebd97889b58e8a9c011acab5b32ce5bc", "note": "synthetic subcheck proof"}
+          ]
+        },
+        {
+          "id": "credential-scan-db-backup-log-image",
+          "status": "proven",
+          "evidence": [
+            {"type": "local-file", "path": "internal/launch/testdata/synthetic-proof.txt", "sha256": "db3115857858e8eb66482d6074e874f9ebd97889b58e8a9c011acab5b32ce5bc", "note": "synthetic subcheck proof"}
+          ]
+        },
+        {
+          "id": "crash-cleanup-ambiguous-create-delete",
+          "status": "proven",
+          "evidence": [
+            {"type": "local-file", "path": "internal/launch/testdata/synthetic-proof.txt", "sha256": "db3115857858e8eb66482d6074e874f9ebd97889b58e8a9c011acab5b32ce5bc", "note": "synthetic subcheck proof"}
+          ]
+        },
+        {
+          "id": "offboard-kill-switch-drill-scoped",
+          "status": "proven",
+          "evidence": [
+            {"type": "local-file", "path": "internal/launch/testdata/synthetic-proof.txt", "sha256": "db3115857858e8eb66482d6074e874f9ebd97889b58e8a9c011acab5b32ce5bc", "note": "synthetic subcheck proof"}
+          ]
+        },
+        {
+          "id": "threat-model-rbac-review",
+          "status": "proven",
+          "evidence": [
+            {"type": "local-file", "path": "internal/launch/testdata/synthetic-proof.txt", "sha256": "db3115857858e8eb66482d6074e874f9ebd97889b58e8a9c011acab5b32ce5bc", "note": "synthetic subcheck proof"}
+          ]
+        }
+      ]
+    },
+    {
+      "id": "workload-ops-38",
+      "required": true,
+      "status": "proven",
+      "bound_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "evidence": [
+        {"type": "local-file", "path": "internal/launch/testdata/synthetic-proof.txt", "sha256": "db3115857858e8eb66482d6074e874f9ebd97889b58e8a9c011acab5b32ce5bc", "note": "synthetic fixture proof"}
+      ],
+      "subchecks": [
+        {
+          "id": "logs-deployed-mesh",
+          "status": "proven",
+          "evidence": [
+            {"type": "local-file", "path": "internal/launch/testdata/synthetic-proof.txt", "sha256": "db3115857858e8eb66482d6074e874f9ebd97889b58e8a9c011acab5b32ce5bc", "note": "synthetic subcheck proof"}
+          ]
+        },
+        {
+          "id": "exec-deployed-mesh",
+          "status": "proven",
+          "evidence": [
+            {"type": "local-file", "path": "internal/launch/testdata/synthetic-proof.txt", "sha256": "db3115857858e8eb66482d6074e874f9ebd97889b58e8a9c011acab5b32ce5bc", "note": "synthetic subcheck proof"}
+          ]
+        },
+        {
+          "id": "port-forward-deployed-mesh",
+          "status": "proven",
+          "evidence": [
+            {"type": "local-file", "path": "internal/launch/testdata/synthetic-proof.txt", "sha256": "db3115857858e8eb66482d6074e874f9ebd97889b58e8a9c011acab5b32ce5bc", "note": "synthetic subcheck proof"}
+          ]
+        }
+      ]
+    },
+    {
+      "id": "credential-184",
+      "required": true,
+      "status": "proven",
+      "bound_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "evidence": [
+        {"type": "local-file", "path": "internal/launch/testdata/synthetic-proof.txt", "sha256": "db3115857858e8eb66482d6074e874f9ebd97889b58e8a9c011acab5b32ce5bc", "note": "synthetic fixture proof"}
+      ]
+    },
+    {
+      "id": "customer-policies",
+      "required": true,
+      "status": "proven",
+      "bound_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "evidence": [
+        {"type": "local-file", "path": "internal/launch/testdata/synthetic-proof.txt", "sha256": "db3115857858e8eb66482d6074e874f9ebd97889b58e8a9c011acab5b32ce5bc", "note": "synthetic fixture proof"}
+      ]
+    },
+    {
+      "id": "paid-activation",
+      "required": true,
+      "status": "proven",
+      "bound_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "evidence": [
+        {"type": "local-file", "path": "internal/launch/testdata/synthetic-proof.txt", "sha256": "db3115857858e8eb66482d6074e874f9ebd97889b58e8a9c011acab5b32ce5bc", "note": "synthetic fixture proof"}
+      ]
+    }
+  ],
+  "supported_cells": [
+    {
+      "provider": "linode",
+      "target": "k3s",
+      "compute": "gpu",
+      "networking": "full",
+      "lifecycle": "cold-destroy",
+      "region": "synthetic-region-1",
+      "instance_type": "synthetic-gpu-1",
+      "status": "qualified-this-release",
+      "bound_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "evidence": [
+        {"type": "local-file", "path": "internal/launch/testdata/synthetic-proof.txt", "sha256": "db3115857858e8eb66482d6074e874f9ebd97889b58e8a9c011acab5b32ce5bc", "note": "synthetic fixture proof"}
+      ],
+      "notes": "synthetic cell — obviously fake, test-only"
+    }
+  ],
+  "matrix_notes": [
+    "SYNTHETIC fixture manifest: every ID is fake and no real launch claim exists here."
+  ]
+}

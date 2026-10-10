@@ -1,0 +1,28 @@
+# Linode GPU smoke test. Exercises the full SaaS path on Linode GPU:
+#   1. kubectl apply -> agent reconciler -> central
+#   2. central decider routes to linode (explicit backend, gpu present)
+#   3. linode backend: mapGPUType -> g2-gpu-rtx4000a1-s, resolveRegion,
+#      boots the baked GPU Image (private/38851039) with bootstrap-baked.sh
+#   4. join-only bootstrap: tailscale up, fetch kubeconfig, start kubelet,
+#      device-plugin static pod advertises nvidia.com/gpu
+#   5. kubelet registers as a ys-burst-* node
+#   6. nvidia-smi runs on the GPU node, exits 0
+#   7. central reaps the burst — DeleteNode destroys the Linode instance
+#
+# Cost: g2-gpu-rtx4000a1-s is ~$0.52/hr. Whole test should be a few
+# cents if cleanup works.
+apiVersion: yscale.sh/v1
+kind: Workload
+metadata:
+  name: smoketest-linode-gpu
+  namespace: default
+spec:
+  image: nvcr.io/nvidia/cuda:12.4.0-base-ubuntu22.04
+  backend: linode
+  command: ["nvidia-smi"]
+  size: small
+  gpu:
+    kind: rtx4000ada
+    count: 1
+    reliability: reliable
+  retries: 0

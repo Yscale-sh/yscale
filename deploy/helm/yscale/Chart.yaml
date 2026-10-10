@@ -1,0 +1,19 @@
+apiVersion: v2
+name: yscale
+description: Sub-second Kubernetes autoscaling for homelabs, powered by Firecracker microVMs.
+type: application
+version: 0.1.1
+appVersion: "0.1.0"
+kubeVersion: ">=1.24.0"
+home: https://github.com/yscale-sh/yscale
+sources:
+  - https://github.com/yscale-sh/yscale
+keywords:
+  - autoscaler
+  - firecracker
+  - k3s
+  - homelab
+  - tailscale
+maintainers:
+  - name: Jake Nesler
+    url: https://github.com/jakenesler

@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "manifest_id": "missing-local-artifact-fixture",
+  "synthetic": true,
+  "release": {
+    "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "tested_head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "tree": "cccccccccccccccccccccccccccccccccccccccc"
+  },
+  "gates": [
+    {
+      "id": "release-commit",
+      "required": true,
+      "status": "proven",
+      "bound_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "evidence": [
+        {
+          "type": "local-file",
+          "path": "internal/launch/testdata/does-not-exist.md",
+          "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+          "note": "points at an artifact that is not in the tree"
+        }
+      ]
+    }
+  ],
+  "supported_cells": []
+}

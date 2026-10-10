@@ -1,0 +1,556 @@
+{{- if and .Values.gateway.enabled .Values.gateway.kubeletProxyRouting.enabled -}}
+{{- /*
+Kubelet-proxy-routing DaemonSet — the routing half of transparent
+Kubernetes logs/exec/attach for stock-kubelet burst nodes.
+
+Background: with `egress-selector-mode: disabled`, the K3s apiserver
+dials burst kubelets directly at their Tailnet CGNAT IP on :10250 for
+`kubectl logs/exec/attach`. Stock burst kubelets do NOT run a K3s agent
+tunnel, so the control-plane HOST needs a route to the Tailnet CGNAT
+range. This DaemonSet installs + continuously reconciles that host route
+on every node, pointing it at the existing gateway pod (which terminates
+the tailnet and, via its tailscaled subnet forwarding, owns the final
+hop to the burst node).
+
+Only rendered when BOTH gateway.enabled and
+gateway.kubeletProxyRouting.enabled are true. When local to this node the
+next-hop is the gateway PodIP; when the gateway is on another node the
+next-hop is that node's InternalIP (its CNI carries the last step to the
+gateway pod). Reconciled periodically so a gateway restart or move
+updates the route without reinstalling Helm.
+
+Scope discipline (see the mission seam): this controller installs an exact
+main-table route for the configured CIDR, tagged with an uncommon route
+proto+metric so it never clobbers a foreign route and cleans up only its own on
+shutdown. On hosts running tailscaled, it also owns one INPUT exception before
+`ts-input`, limited to ESTABLISHED/RELATED replies from that CIDR; tailscaled's
+anti-spoof rule would otherwise discard the gateway-relayed replies. On the
+current gateway host only, it owns two TCP/10250 FORWARD exceptions so remote
+control-plane traffic can traverse the host into the gateway pod and back. No
+SNAT, no default route, and no host tailscaled policy-routing changes. The
+gateway's tailscaled forwarding owns the final hop.
+*/}}
+{{- $name := printf "%s-yscale-agent-kubelet-route" .Release.Name -}}
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "yscale-agent.labels" . | nindent 4 }}
+    app.kubernetes.io/component: kubelet-route
+spec:
+  selector:
+    matchLabels:
+      {{- include "yscale-agent.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: kubelet-route
+  template:
+    metadata:
+      labels:
+        {{- include "yscale-agent.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: kubelet-route
+    spec:
+      # Run on every node (control-plane + workers). The apiserver lives
+      # on a control-plane node, so that host in particular must carry
+      # the CGNAT route; tolerate any taint so it does.
+      tolerations:
+        - operator: Exists
+      # This mutates customer-cluster host routes. Burst nodes join the same
+      # Kubernetes API but are route destinations, not customer-cluster hosts;
+      # never schedule the reconciler back onto them.
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: yscale.sh/burst-node
+                    operator: DoesNotExist
+      # hostNetwork: `ip route` in this pod then mutates the HOST main
+      # routing table (with NET_ADMIN). dnsPolicy resolves
+      # kubernetes.default.svc through cluster DNS while on hostNetwork.
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      serviceAccountName: {{ $name }}
+      priorityClassName: {{ .Values.gateway.priorityClassName | default "system-cluster-critical" }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: kubelet-route
+          # Reuse the gateway Tailscale image so /bin/sh, wget, and ip
+          # are already present — no runtime package downloads.
+          image: "{{ .Values.gateway.image.repository }}:{{ .Values.gateway.image.tag }}"
+          imagePullPolicy: {{ .Values.gateway.image.pullPolicy }}
+          securityContext:
+            # NET_ADMIN mutates routes/firewall; NET_RAW is required by the
+            # legacy iptables backend used on some homelab hosts. Not
+            # privileged; no host tailscaled policy-routing changes.
+            privileged: false
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+              add: [NET_ADMIN, NET_RAW]
+          env:
+            - name: NODE_NAME
+              valueFrom: { fieldRef: { fieldPath: spec.nodeName } }
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -eu
+              SA_TOKEN_FILE=/var/run/secrets/kubernetes.io/serviceaccount/token
+
+              DEST_CIDR="{{ .Values.gateway.kubeletProxyRouting.destinationCIDR }}"
+              RECONCILE_INTERVAL="{{ .Values.gateway.kubeletProxyRouting.reconcileInterval | default 30 }}"
+              NAMESPACE="{{ .Release.Namespace }}"
+              LABEL_SELECTOR="app.kubernetes.io/name=yscale-agent,app.kubernetes.io/instance={{ .Release.Name }},app.kubernetes.io/component=gateway"
+              API="https://kubernetes.default.svc"
+              # Ownership markers. `proto 111` (outside the well-known
+              # rt_protos range) + `metric 10250` (mirrors the kubelet
+              # port for humans) tag every route THIS controller installs.
+              # We use them to (a) never clobber a route we don't own and
+              # (b) clean up only our own route on shutdown.
+              ROUTE_PROTO=111
+              ROUTE_METRIC=10250
+              REPLY_RULE_COMMENT=yscale-kubelet-route-replies
+              FORWARD_REQUEST_RULE_COMMENT=yscale-kubelet-route-forward-request
+              FORWARD_REPLY_RULE_COMMENT=yscale-kubelet-route-forward-reply
+              IPTABLES_CMD=""
+
+              [ -r "$SA_TOKEN_FILE" ] || { echo "FATAL: ServiceAccount token not mounted at $SA_TOKEN_FILE" >&2; exit 1; }
+
+              # Validate the destination CIDR BEFORE ever touching the
+              # route table — a malformed value would otherwise be passed
+              # straight to `ip route`.
+              validate_ipv4_cidr() {
+                CIDR_ADDR=${1%/*}
+                CIDR_PREFIX=${1#*/}
+                [ "$CIDR_ADDR" != "$1" ] || return 1
+                case "$CIDR_PREFIX" in ''|*[!0-9]*) return 1 ;; esac
+                [ "$CIDR_PREFIX" -le 32 ] || return 1
+
+                OLD_IFS=$IFS
+                IFS=.
+                set -- $CIDR_ADDR
+                IFS=$OLD_IFS
+                [ "$#" -eq 4 ] || return 1
+                for OCTET in "$@"; do
+                  case "$OCTET" in ''|*[!0-9]*) return 1 ;; esac
+                  [ "${#OCTET}" -le 3 ] && [ "$OCTET" -le 255 ] || return 1
+                done
+              }
+              validate_ipv4_cidr "$DEST_CIDR" \
+                || { echo "FATAL: destinationCIDR '$DEST_CIDR' is not a valid IPv4 CIDR" >&2; exit 1; }
+              case "$RECONCILE_INTERVAL" in ''|*[!0-9]*)
+                echo "FATAL: reconcileInterval '$RECONCILE_INTERVAL' must be a positive integer" >&2; exit 1 ;;
+              esac
+              [ "$RECONCILE_INTERVAL" -ge 1 ] \
+                || { echo "FATAL: reconcileInterval '$RECONCILE_INTERVAL' must be at least 1" >&2; exit 1; }
+
+              # Does the current exact route for DEST_CIDR carry our marker?
+              owns_route() {
+                OWNED_ROUTE=$(ip route show exact "$DEST_CIDR" 2>/dev/null || true)
+                printf '%s' "$OWNED_ROUTE" | grep -q "proto $ROUTE_PROTO" &&
+                  printf '%s' "$OWNED_ROUTE" | grep -q "metric $ROUTE_METRIC"
+              }
+
+              # Pick the host's active nft/legacy backend. Prefer the backend
+              # that owns host tailscaled's anti-spoof chain; otherwise prefer
+              # a default-DROP or populated FORWARD chain, because the gateway
+              # forwarding exceptions are needed even without host tailscaled.
+              select_iptables() {
+                IPTABLES_CMD=""
+                FIRST_CMD=""
+                DROP_CMD=""
+                RULES_CMD=""
+                for CANDIDATE in iptables-nft iptables-legacy iptables; do
+                  command -v "$CANDIDATE" >/dev/null 2>&1 || continue
+                  CANDIDATE_FORWARD=$("$CANDIDATE" -S FORWARD 2>/dev/null) || continue
+                  [ -n "$FIRST_CMD" ] || FIRST_CMD=$CANDIDATE
+                  if "$CANDIDATE" -S ts-input 2>/dev/null | grep -q '100\.64\.0\.0/10.*DROP'; then
+                    IPTABLES_CMD=$CANDIDATE
+                    return
+                  fi
+                  if printf '%s\n' "$CANDIDATE_FORWARD" | grep -q '^-P FORWARD DROP'; then
+                    [ -n "$DROP_CMD" ] || DROP_CMD=$CANDIDATE
+                  elif printf '%s\n' "$CANDIDATE_FORWARD" | grep -q '^-A FORWARD '; then
+                    [ -n "$RULES_CMD" ] || RULES_CMD=$CANDIDATE
+                  fi
+                done
+                IPTABLES_CMD=${DROP_CMD:-${RULES_CMD:-$FIRST_CMD}}
+              }
+
+              remove_reply_rule() {
+                [ -n "$IPTABLES_CMD" ] || return 0
+                while "$IPTABLES_CMD" -C INPUT -s "$DEST_CIDR" \
+                  -m conntrack --ctstate ESTABLISHED,RELATED \
+                  -m comment --comment "$REPLY_RULE_COMMENT" -j ACCEPT 2>/dev/null; do
+                  "$IPTABLES_CMD" -D INPUT -s "$DEST_CIDR" \
+                    -m conntrack --ctstate ESTABLISHED,RELATED \
+                    -m comment --comment "$REPLY_RULE_COMMENT" -j ACCEPT 2>/dev/null || break
+                done
+              }
+
+              ensure_reply_rule() {
+                [ -n "$IPTABLES_CMD" ] || select_iptables
+                [ -n "$IPTABLES_CMD" ] || return 0
+
+                # Host tailscaled deliberately drops 100.64/10 packets
+                # received outside tailscale0 as spoofed. Only hosts with that
+                # exact chain need the INPUT exception; FORWARD reconciliation
+                # still uses the selected backend when this chain is absent.
+                if ! "$IPTABLES_CMD" -S ts-input 2>/dev/null | grep -q '100\.64\.0\.0/10.*DROP'; then
+                  remove_reply_rule
+                  return 0
+                fi
+
+                INPUT_RULES=$("$IPTABLES_CMD" -S INPUT 2>/dev/null || true)
+                TS_LINE=$(printf '%s\n' "$INPUT_RULES" | awk '$1 == "-A" && $2 == "INPUT" && $(NF-1) == "-j" && $NF == "ts-input" { print NR; exit }')
+                OUR_LINE=$(printf '%s\n' "$INPUT_RULES" | grep -n "$REPLY_RULE_COMMENT" | head -1 | cut -d: -f1)
+                if [ -n "$OUR_LINE" ] && { [ -z "$TS_LINE" ] || [ "$OUR_LINE" -lt "$TS_LINE" ]; }; then
+                  return 0
+                fi
+
+                remove_reply_rule
+                "$IPTABLES_CMD" -I INPUT 1 -s "$DEST_CIDR" \
+                  -m conntrack --ctstate ESTABLISHED,RELATED \
+                  -m comment --comment "$REPLY_RULE_COMMENT" -j ACCEPT
+                echo "[kubelet-route] reply firewall rule set via $IPTABLES_CMD: $DEST_CIDR ESTABLISHED,RELATED before ts-input"
+              }
+
+              # Traffic from a remote control-plane is transit traffic on the
+              # gateway host: it crosses FORWARD on the way into the gateway
+              # pod and back. The INPUT reply exception above only protects
+              # connections terminating on this host, so it cannot admit this
+              # path through a host whose FORWARD policy or early jump drops it.
+              # Keep the two narrowly scoped rules ahead of any potentially
+              # blocking host path, without accumulating copies. Cooperative
+              # managers such as kube-router may prepend their non-matching
+              # dispatch rule; that is safe and should not trigger churn.
+              remove_forward_rules() {
+                [ -n "$IPTABLES_CMD" ] || select_iptables
+                [ -n "$IPTABLES_CMD" ] || return 0
+
+                while "$IPTABLES_CMD" -C FORWARD -p tcp -d "$DEST_CIDR" --dport 10250 \
+                  -m conntrack --ctstate NEW,ESTABLISHED \
+                  -m comment --comment "$FORWARD_REQUEST_RULE_COMMENT" -j ACCEPT 2>/dev/null; do
+                  "$IPTABLES_CMD" -D FORWARD -p tcp -d "$DEST_CIDR" --dport 10250 \
+                    -m conntrack --ctstate NEW,ESTABLISHED \
+                    -m comment --comment "$FORWARD_REQUEST_RULE_COMMENT" -j ACCEPT 2>/dev/null || break
+                done
+                while "$IPTABLES_CMD" -C FORWARD -p tcp -s "$DEST_CIDR" --sport 10250 \
+                  -m conntrack --ctstate ESTABLISHED,RELATED \
+                  -m comment --comment "$FORWARD_REPLY_RULE_COMMENT" -j ACCEPT 2>/dev/null; do
+                  "$IPTABLES_CMD" -D FORWARD -p tcp -s "$DEST_CIDR" --sport 10250 \
+                    -m conntrack --ctstate ESTABLISHED,RELATED \
+                    -m comment --comment "$FORWARD_REPLY_RULE_COMMENT" -j ACCEPT 2>/dev/null || break
+                done
+              }
+
+              ensure_forward_rules() {
+                [ -n "$IPTABLES_CMD" ] || select_iptables
+                [ -n "$IPTABLES_CMD" ] || return 0
+
+                FORWARD_RULES=$("$IPTABLES_CMD" -S FORWARD 2>/dev/null || true)
+                REQUEST_COUNT=$(printf '%s\n' "$FORWARD_RULES" | grep -F -c "$FORWARD_REQUEST_RULE_COMMENT" || true)
+                REPLY_COUNT=$(printf '%s\n' "$FORWARD_RULES" | grep -F -c "$FORWARD_REPLY_RULE_COMMENT" || true)
+                REQUEST_LINE=$(printf '%s\n' "$FORWARD_RULES" | grep -F -n "$FORWARD_REQUEST_RULE_COMMENT" | head -1 | cut -d: -f1)
+                REPLY_LINE=$(printf '%s\n' "$FORWARD_RULES" | grep -F -n "$FORWARD_REPLY_RULE_COMMENT" | head -1 | cut -d: -f1)
+                BLOCK_LINE=$(printf '%s\n' "$FORWARD_RULES" | awk '
+                  $1 == "-A" && $2 == "FORWARD" {
+                    target = ""
+                    for (i = 3; i < NF; i++) {
+                      if ($i == "-j") {
+                        target = $(i + 1)
+                        break
+                      }
+                    }
+                    if (target != "" && target != "ACCEPT" && target != "KUBE-ROUTER-FORWARD") {
+                      print NR
+                      exit
+                    }
+                  }
+                ')
+                if [ "$REQUEST_COUNT" -eq 1 ] && [ "$REPLY_COUNT" -eq 1 ] &&
+                   { [ -z "$BLOCK_LINE" ] || { [ "$REQUEST_LINE" -lt "$BLOCK_LINE" ] && [ "$REPLY_LINE" -lt "$BLOCK_LINE" ]; }; } &&
+                   "$IPTABLES_CMD" -C FORWARD -p tcp -d "$DEST_CIDR" --dport 10250 \
+                     -m conntrack --ctstate NEW,ESTABLISHED \
+                     -m comment --comment "$FORWARD_REQUEST_RULE_COMMENT" -j ACCEPT 2>/dev/null &&
+                   "$IPTABLES_CMD" -C FORWARD -p tcp -s "$DEST_CIDR" --sport 10250 \
+                     -m conntrack --ctstate ESTABLISHED,RELATED \
+                     -m comment --comment "$FORWARD_REPLY_RULE_COMMENT" -j ACCEPT 2>/dev/null; then
+                  return 0
+                fi
+
+                remove_forward_rules
+                "$IPTABLES_CMD" -I FORWARD 1 -p tcp -d "$DEST_CIDR" --dport 10250 \
+                  -m conntrack --ctstate NEW,ESTABLISHED \
+                  -m comment --comment "$FORWARD_REQUEST_RULE_COMMENT" -j ACCEPT
+                "$IPTABLES_CMD" -I FORWARD 2 -p tcp -s "$DEST_CIDR" --sport 10250 \
+                  -m conntrack --ctstate ESTABLISHED,RELATED \
+                  -m comment --comment "$FORWARD_REPLY_RULE_COMMENT" -j ACCEPT
+                echo "[kubelet-route] gateway forwarding rules set via $IPTABLES_CMD: TCP $DEST_CIDR:10250 before host drop/jump paths"
+              }
+
+              # On SIGTERM remove OUR route — but only if it's still ours.
+              # A foreign route that replaced ours is left untouched.
+              cleanup() {
+                remove_forward_rules
+                remove_reply_rule
+                if owns_route; then
+                  echo "[kubelet-route] SIGTERM: removing owned route $DEST_CIDR"
+                  ip route del "$DEST_CIDR" proto "$ROUTE_PROTO" metric "$ROUTE_METRIC" 2>/dev/null || true
+                else
+                  echo "[kubelet-route] SIGTERM: route $DEST_CIDR not owned by this controller; leaving as-is"
+                fi
+                exit 0
+              }
+              trap cleanup TERM INT
+
+              ensure_reply_rule
+
+              # BusyBox wget + SA bearer token, mirroring the subnet
+              # router. --no-check-certificate: the SA token authenticates
+              # us and kubernetes.default.svc is only reachable inside the
+              # cluster network (BusyBox wget lacks --ca-certificate).
+              api_get() {
+                wget -q -O - \
+                  -T 10 \
+                  --header="Authorization: Bearer $(cat "$SA_TOKEN_FILE")" \
+                  --no-check-certificate \
+                  "$API$1"
+              }
+
+              echo "[kubelet-route] node=$NODE_NAME dest=$DEST_CIDR interval=${RECONCILE_INTERVAL}s proto=$ROUTE_PROTO metric=$ROUTE_METRIC"
+
+              while :; do
+                # Reassert ordering if tailscaled recreated its INPUT jump.
+                ensure_reply_rule
+                # Discover candidate gateway pods by the release/component labels
+                # and Running phase. Note: fieldSelector=status.phase=Running
+                # does NOT exclude terminating pods (which keep status.phase=Running
+                # while deletionTimestamp is set). We treat this LIST only as candidate
+                # discovery and must validate exactly one candidate with an authoritative GET.
+                PODS_JSON=$(api_get "/api/v1/namespaces/$NAMESPACE/pods?labelSelector=$(echo "$LABEL_SELECTOR" | sed 's/,/%2C/g')&fieldSelector=status.phase%3DRunning") || PODS_JSON=""
+                if [ -z "$PODS_JSON" ]; then
+                  echo "[kubelet-route] apiserver pod query failed; retaining last route, retry in ${RECONCILE_INTERVAL}s" >&2
+                  sleep "$RECONCILE_INTERVAL"; continue
+                fi
+
+                # Extract the TOP-LEVEL PodList items array. Do not use a greedy
+                # regex: real Pod specs contain nested fields also named
+                # "items" (for example projected downwardAPI volumes), and a
+                # greedy `.*"items"` silently starts at the last nested field.
+                # Shell's shortest-prefix removal selects the first occurrence;
+                # the PodList's final `]}` then gives us an exact outer suffix.
+                CLEAN_LIST_JSON=$(printf '%s' "$PODS_JSON" | tr -d '\n\r\t ')
+                ITEMS_JSON=${CLEAN_LIST_JSON#*\"items\":\[}
+                if [ "$ITEMS_JSON" = "$CLEAN_LIST_JSON" ]; then
+                  echo "[kubelet-route] PodList JSON has no top-level items array; retaining last route, retry in ${RECONCILE_INTERVAL}s" >&2
+                  sleep "$RECONCILE_INTERVAL"; continue
+                fi
+                ITEMS_JSON=${ITEMS_JSON%\}}
+                ITEMS_JSON=${ITEMS_JSON%\]}
+                POD_LINES=$(printf '%s' "$ITEMS_JSON" | sed 's/{"metadata":/\n{"metadata":/g')
+
+                CANDIDATE_COUNT=0
+                FINAL_NAME=""
+                FINAL_UID=""
+                NL_VAR="$(printf '\nx')"
+                NL_VAR="${NL_VAR%x}"
+                OLD_IFS=$IFS
+                IFS="$NL_VAR"
+                for LINE in $POD_LINES; do
+                  IFS=$OLD_IFS
+                  [ -n "$LINE" ] || continue
+                  C_NAME=$(printf '%s' "$LINE" | grep -oE '"name":"[^"]+"' | head -1 | sed -E 's/.*:"([^"]+)".*/\1/')
+                  C_UID=$(printf '%s' "$LINE" | grep -oE '"uid":"[^"]+"' | head -1 | sed -E 's/.*:"([^"]+)".*/\1/')
+                  if [ -n "$C_NAME" ] && [ -n "$C_UID" ]; then
+                    CANDIDATE_COUNT=$((CANDIDATE_COUNT + 1))
+                    FINAL_NAME="$C_NAME"
+                    FINAL_UID="$C_UID"
+                  fi
+                done
+                IFS=$OLD_IFS
+
+                if [ "$CANDIDATE_COUNT" -ne 1 ]; then
+                  echo "[kubelet-route] expected exactly 1 candidate pod, found $CANDIDATE_COUNT; retaining last route, retry in ${RECONCILE_INTERVAL}s" >&2
+                  sleep "$RECONCILE_INTERVAL"; continue
+                fi
+
+                # Authoritative exact GET of the single candidate pod
+                POD_JSON=$(api_get "/api/v1/namespaces/$NAMESPACE/pods/$FINAL_NAME") || POD_JSON=""
+                if [ -z "$POD_JSON" ]; then
+                  echo "[kubelet-route] exact GET for pod $FINAL_NAME failed; retaining last route, retry in ${RECONCILE_INTERVAL}s" >&2
+                  sleep "$RECONCILE_INTERVAL"; continue
+                fi
+
+                CLEAN_POD_JSON=$(printf '%s' "$POD_JSON" | tr -d '\n\r\t ')
+                GET_UID=$(printf '%s' "$CLEAN_POD_JSON" | grep -oE '"uid":"[^"]+"' | head -1 | sed -E 's/.*:"([^"]+)".*/\1/')
+                HAS_DELETION=$(printf '%s' "$CLEAN_POD_JSON" | grep -oE '"deletionTimestamp":"[^"]+"' | head -1 | sed -E 's/.*:"([^"]+)".*/\1/')
+                GET_PHASE=$(printf '%s' "$CLEAN_POD_JSON" | grep -oE '"phase":"[^"]+"' | head -1 | sed -E 's/.*:"([^"]+)".*/\1/')
+                READY_STATUS=$(printf '%s' "$CLEAN_POD_JSON" | tr '{' '\n' | grep -E '"type":"Ready"' | head -1 | grep -oE '"status":"[^"]+"' | sed -E 's/.*:"([^"]+)".*/\1/')
+                GET_NODE=$(printf '%s' "$CLEAN_POD_JSON" | grep -oE '"nodeName":"[^"]+"' | head -1 | sed -E 's/.*:"([^"]+)".*/\1/')
+                GET_POD_IP=$(printf '%s' "$CLEAN_POD_JSON" | grep -oE '"podIP":"[^"]+"' | head -1 | sed -E 's/.*:"([^"]+)".*/\1/')
+
+                if [ -z "$GET_UID" ] || [ -z "$GET_PHASE" ] || [ -z "$READY_STATUS" ]; then
+                  echo "[kubelet-route] pod $FINAL_NAME API JSON parse failure (UID=$GET_UID phase=$GET_PHASE Ready=$READY_STATUS); retaining last route, retry in ${RECONCILE_INTERVAL}s" >&2
+                  sleep "$RECONCILE_INTERVAL"; continue
+                fi
+
+                if [ "$GET_UID" != "$FINAL_UID" ]; then
+                  echo "[kubelet-route] pod $FINAL_NAME UID mismatch (expected $FINAL_UID, got $GET_UID); retaining last route, retry in ${RECONCILE_INTERVAL}s" >&2
+                  sleep "$RECONCILE_INTERVAL"; continue
+                fi
+
+                if [ -n "$HAS_DELETION" ]; then
+                  echo "[kubelet-route] pod $FINAL_NAME is terminating (has deletionTimestamp: $HAS_DELETION); retaining last route, retry in ${RECONCILE_INTERVAL}s" >&2
+                  sleep "$RECONCILE_INTERVAL"; continue
+                fi
+
+                if [ "$GET_PHASE" != "Running" ]; then
+                  echo "[kubelet-route] pod $FINAL_NAME phase is $GET_PHASE (expected Running); retaining last route, retry in ${RECONCILE_INTERVAL}s" >&2
+                  sleep "$RECONCILE_INTERVAL"; continue
+                fi
+
+                if [ "$READY_STATUS" != "True" ]; then
+                  echo "[kubelet-route] pod $FINAL_NAME is not Ready (Ready status: $READY_STATUS); retaining last route, retry in ${RECONCILE_INTERVAL}s" >&2
+                  sleep "$RECONCILE_INTERVAL"; continue
+                fi
+
+                if [ -z "$GET_NODE" ] || [ -z "$GET_POD_IP" ]; then
+                  echo "[kubelet-route] pod $FINAL_NAME has empty nodeName ($GET_NODE) or podIP ($GET_POD_IP); retaining last route, retry in ${RECONCILE_INTERVAL}s" >&2
+                  sleep "$RECONCILE_INTERVAL"; continue
+                fi
+
+                # Local gateway → hop straight to its PodIP over this
+                # node's CNI. Remote gateway → hop to that node's
+                # InternalIP; its CNI carries the last step to the pod.
+                if [ "$GET_NODE" = "$NODE_NAME" ]; then
+                  ensure_forward_rules
+                  NEXTHOP="$GET_POD_IP"
+                  HOP_KIND="local podIP"
+                  REMOVE_FORWARD_AFTER_ROUTE=0
+                else
+                  NODE_JSON=$(api_get "/api/v1/nodes/$GET_NODE") || NODE_JSON=""
+                  # Normalize both pretty and compact API JSON, split objects,
+                  # then select the NodeAddress whose type is InternalIP. This
+                  # is deliberately field-order independent: Kubernetes may
+                  # serialize NodeAddress as either address/type or type/address.
+                  NEXTHOP=$(printf '%s' "$NODE_JSON" | tr -d '\n\r\t ' | tr '{' '\n' | grep -E '"type":"InternalIP"' | head -1 | sed -E 's/.*"address":"([^"]+)".*/\1/')
+                  HOP_KIND="remote node $GET_NODE InternalIP"
+                  # Preserve the old local-gateway forwarding rules until the
+                  # replacement remote route is known and installed. Removing
+                  # them before node lookup/route replacement creates an outage
+                  # when the API read or netlink mutation fails mid-transition.
+                  REMOVE_FORWARD_AFTER_ROUTE=1
+                fi
+                if [ -z "$NEXTHOP" ]; then
+                  echo "[kubelet-route] could not resolve next-hop ($HOP_KIND); retaining last route, retry in ${RECONCILE_INTERVAL}s" >&2
+                  sleep "$RECONCILE_INTERVAL"; continue
+                fi
+
+                # Ownership guard: if an exact route for DEST_CIDR exists
+                # that we did NOT install, never overwrite it.
+                EXISTING=$(ip route show exact "$DEST_CIDR" 2>/dev/null || true)
+                if [ -n "$EXISTING" ] &&
+                   ! { printf '%s' "$EXISTING" | grep -q "proto $ROUTE_PROTO" &&
+                       printf '%s' "$EXISTING" | grep -q "metric $ROUTE_METRIC"; }; then
+                  echo "[kubelet-route] exact route $DEST_CIDR exists but is not owned by this controller; refusing to overwrite: $EXISTING" >&2
+                  sleep "$RECONCILE_INTERVAL"; continue
+                fi
+
+                # Converged? Skip the netlink write when our route already
+                # points at the right next-hop.
+                if printf '%s' "$EXISTING" | grep -q "proto $ROUTE_PROTO" &&
+                   printf '%s' "$EXISTING" | grep -q "metric $ROUTE_METRIC" &&
+                   printf '%s' "$EXISTING" | grep -q "via $NEXTHOP "; then
+                  [ "$REMOVE_FORWARD_AFTER_ROUTE" -eq 0 ] || remove_forward_rules
+                  sleep "$RECONCILE_INTERVAL"; continue
+                fi
+
+                if ip route replace "$DEST_CIDR" via "$NEXTHOP" proto "$ROUTE_PROTO" metric "$ROUTE_METRIC"; then
+                  [ "$REMOVE_FORWARD_AFTER_ROUTE" -eq 0 ] || remove_forward_rules
+                  echo "[kubelet-route] route set: $DEST_CIDR via $NEXTHOP ($HOP_KIND) proto $ROUTE_PROTO metric $ROUTE_METRIC"
+                else
+                  echo "[kubelet-route] WARN: ip route replace failed for $DEST_CIDR via $NEXTHOP; retaining last route" >&2
+                fi
+
+                sleep "$RECONCILE_INTERVAL"
+              done
+          resources:
+            requests: { cpu: 10m, memory: 32Mi }
+            limits:   { memory: 64Mi }
+{{- /*
+Dedicated least-privilege identity. get/list/watch pods in the release
+namespace (resolve the gateway pod) and get/list/watch nodes (resolve a
+remote gateway node's InternalIP). No secrets, no write verbs.
+*/}}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "yscale-agent.labels" . | nindent 4 }}
+    app.kubernetes.io/component: kubelet-route
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "yscale-agent.labels" . | nindent 4 }}
+    app.kubernetes.io/component: kubelet-route
+rules:
+  # Resolve the gateway pod (its PodIP + spec.nodeName) in this namespace.
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "yscale-agent.labels" . | nindent 4 }}
+    app.kubernetes.io/component: kubelet-route
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $name }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $name }}
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "yscale-agent.labels" . | nindent 4 }}
+    app.kubernetes.io/component: kubelet-route
+rules:
+  # Resolve a remote gateway node's InternalIP. Nodes only, read-only.
+  - apiGroups: [""]
+    resources: [nodes]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $name }}
+  labels:
+    {{- include "yscale-agent.labels" . | nindent 4 }}
+    app.kubernetes.io/component: kubelet-route
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $name }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $name }}
+    namespace: {{ .Release.Namespace }}
+{{- end -}}

@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "manifest_id": "unqualified-cell-fixture",
+  "synthetic": true,
+  "release": {
+    "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "tested_head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "tree": "cccccccccccccccccccccccccccccccccccccccc"
+  },
+  "gates": [
+    {
+      "id": "provider-qualification",
+      "required": true,
+      "status": "pending",
+      "bound_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "missing": "no qualification run has been approved or executed"
+    }
+  ],
+  "supported_cells": [
+    {
+      "provider": "linode",
+      "target": "k3s",
+      "compute": "gpu",
+      "networking": "full",
+      "status": "qualified-this-release",
+      "bound_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "evidence": [
+        {
+          "type": "local-file",
+          "path": "internal/launch/testdata/synthetic-proof.txt",
+          "note": "cell claims this-release qualification while the gate is pending"
+        }
+      ]
+    }
+  ]
+}

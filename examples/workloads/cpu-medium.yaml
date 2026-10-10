@@ -1,0 +1,24 @@
+# A more realistic CPU workload — pulls a real image, does some work,
+# exits. Useful for verifying that:
+#   - Image pulls work on the burst node
+#   - The pod stays scheduled long enough to observe scale-up
+#   - Scale-down kicks in after the workload finishes
+apiVersion: yscale.sh/v1
+kind: Workload
+metadata:
+  name: stress-cpu
+  namespace: default
+spec:
+  image: docker.io/polinux/stress
+  size: medium                    # 2 vCPU, 4 Gi
+  command: ["stress"]
+  args: ["--cpu", "2", "--timeout", "120s"]
+  retries: 0
+  budget:
+    maxUSD: 0.50
+    deadline: 10m
+  # networking.tier defaults to "full" when omitted, and full is the only
+  # supported value: host-mode Cilium giving real cross-cluster pod-to-pod +
+  # ClusterIP + NetworkPolicy via the gateway sidecar. It adds ~2-3 min boot
+  # (BPF compile). The removed "lite" fast-boot tier is refused during
+  # workload admission; any other value is rejected too.

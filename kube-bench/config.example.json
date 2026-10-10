@@ -1,0 +1,175 @@
+{
+  "apiVersion": "kube-bench.yscale.dev/v1alpha1",
+  "kind": "BenchmarkConfig",
+  "metadata": {
+    "name": "jake-homelab"
+  },
+  "spec": {
+    "namespace": "yscale-kube-bench",
+    "image": "ghcr.io/jakenesler/yscale-kube-bench:latest",
+    "imagePullPolicy": "IfNotPresent",
+    "timeoutSeconds": 1200,
+    "parallelism": 4,
+    "includeControlPlane": false,
+    "inventory": {
+      "hostInspection": true,
+      "privileged": true
+    },
+    "reaction": {
+      "rounds": 3,
+      "readyTimeoutSeconds": 120,
+      "pullImage": "ghcr.io/jakenesler/yscale-kube-bench:latest",
+      "pullImagePolicy": "Always",
+      "clusterWave": true
+    },
+    "compute": {
+      "durationSeconds": 8,
+      "isolatedParallelism": 1,
+      "clusterSteps": [1, 2, 4, 0]
+    },
+    "network": {
+      "durationSeconds": 8,
+      "rttSamples": 250,
+      "udpSamples": 250,
+      "parallelism": 1,
+      "matrix": "sample",
+      "servicePath": true
+    },
+    "storage": {
+      "durationSeconds": 8,
+      "sizeMiB": 1024,
+      "ioEngine": "io_uring",
+      "targets": [
+        {
+          "name": "container-ephemeral",
+          "kind": "emptyDir",
+          "mountPath": "/bench/ephemeral"
+        },
+        {
+          "name": "proxmox-zfs-local",
+          "kind": "hostPath",
+          "hostPath": "/var/lib/yscale-bench/zfs",
+          "mountPath": "/bench/zfs",
+          "deviceHint": "virtio-scsi -> Proxmox ZFS -> NVMe",
+          "nodes": ["r730-worker-1"]
+        },
+        {
+          "name": "unas-pvc",
+          "kind": "pvc",
+          "claimName": "unas-benchmark-pvc",
+          "mountPath": "/bench/unas",
+          "deviceHint": "NFS -> UniFi UNAS Pro",
+          "nodes": ["workstation-worker"]
+        }
+      ]
+    },
+    "transcode": {
+      "profiles": [
+        {
+          "name": "h264-cpu-1080p",
+          "encoder": "libx264",
+          "width": 1920,
+          "height": 1080,
+          "fps": 30,
+          "seconds": 15,
+          "arguments": ["-preset", "medium"],
+          "hardware": false
+        },
+        {
+          "name": "h265-cpu-1080p",
+          "encoder": "libx265",
+          "width": 1920,
+          "height": 1080,
+          "fps": 30,
+          "seconds": 15,
+          "arguments": ["-preset", "medium"],
+          "hardware": false
+        },
+        {
+          "name": "h264-nvidia-1080p",
+          "encoder": "h264_nvenc",
+          "width": 1920,
+          "height": 1080,
+          "fps": 60,
+          "seconds": 15,
+          "arguments": ["-preset", "p4"],
+          "hardware": true,
+          "resources": {
+            "nvidia.com/gpu": "1"
+          },
+          "nodes": ["workstation-worker"]
+        }
+      ]
+    },
+    "nodeOverrides": [
+      {
+        "match": {
+          "name": "workstation-worker"
+        },
+        "physicalHost": {
+          "name": "workstation",
+          "cpuModel": "Intel Core i9-13900K",
+          "platform": "bare-metal",
+          "storageBackend": "Crucial T700 NVMe",
+          "networkBackend": "10GbE"
+        },
+        "guest": {
+          "type": "bare-metal"
+        },
+        "economics": {
+          "purchasePriceUsd": 1200,
+          "idleWatts": 82,
+          "peakWatts": 410
+        },
+        "tags": {
+          "class": "desktop",
+          "owner": "jake"
+        }
+      },
+      {
+        "match": {
+          "name": "r730-worker-1"
+        },
+        "physicalHost": {
+          "name": "r730",
+          "cpuModel": "Intel Xeon E5 v4",
+          "platform": "proxmox",
+          "hypervisor": "kvm",
+          "storageBackend": "ZFS zvol on SATA SSD",
+          "networkBackend": "Linux bridge -> 10GbE"
+        },
+        "guest": {
+          "type": "vm",
+          "cpuMode": "host",
+          "vcpus": 16
+        },
+        "economics": {
+          "purchasePriceUsd": 300,
+          "idleWatts": 170,
+          "peakWatts": 390
+        },
+        "tags": {
+          "class": "server",
+          "virtualization": "proxmox-kvm"
+        }
+      },
+      {
+        "match": {
+          "labels": {
+            "kubernetes.io/arch": "arm64"
+          }
+        },
+        "physicalHost": {
+          "platform": "bare-metal",
+          "cpuModel": "CIX P1 / CI80"
+        },
+        "guest": {
+          "type": "bare-metal"
+        },
+        "tags": {
+          "class": "arm-edge"
+        }
+      }
+    ]
+  }
+}

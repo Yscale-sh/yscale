@@ -1,0 +1,10 @@
+# Image: registry.fly.io/yscale-cluster-agent
+#
+# The customer-cluster agent process. No privileges, no shell.
+# Binary is cross-compiled on the host (see `make agent-image-build`)
+# — building inside a constrained buildkit container OOMs on the
+# AWS SDK codegen the agent transitively pulls in.
+FROM gcr.io/distroless/static-debian12:nonroot
+COPY bin/yscale-agent-linux-amd64 /usr/local/bin/yscale-agent
+USER nonroot:nonroot
+ENTRYPOINT ["/usr/local/bin/yscale-agent"]

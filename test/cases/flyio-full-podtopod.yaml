@@ -1,0 +1,71 @@
+# Joined-CNI pod-to-pod test: a tier=full burst pod must reach an
+# in-cluster Service on the homelab. The burst is on Fly's network but
+# joins the customer cluster as a kubelet node; host-mode Cilium on the
+# burst (binary baked into the rootfs) provides kube-proxy-replacement,
+# so Service IPs resolve and route across the tailnet underlay to the
+# homelab CoreDNS/Pod IPs.
+#
+# Target: the yscale-cloud Service, by its LIVE ClusterIP (yscaletest
+# injects it via the __YSCALE_CLOUD_CLUSTERIP__ placeholder — see below). It's
+# guaranteed to be running because the e2e harness restarts it as part
+# of preflight, and it's reachable from any in-cluster pod. The pod
+# exits 0 only on "ok" — anything else (timeout, NXDOMAIN, 500) fails
+# the case loudly, which is the whole point.
+#
+# Pair this with `flyio-full.yaml` (which only smokes the boot path).
+# If THIS case passes too, joined-CNI works end-to-end. Full is the only
+# supported networking tier — the removed lite tier had no Service
+# routing and never made sense for this test.
+apiVersion: yscale.sh/v1
+kind: Workload
+metadata:
+  name: flyio-full-podtopod
+spec:
+  image: curlimages/curl:8.10.1
+  backend: flyio
+  # Fly small (1 CPU / 2 GiB) but explicit pod resources — the `size`
+  # preset asks for the WHOLE machine (1 CPU + 2048 MiB), leaving no
+  # room for kernel + kubelet + the prometheus node-exporter
+  # DaemonSet that lands on burst nodes via Exists tolerations. curl
+  # needs almost nothing.
+  cpu: "100m"
+  memory: "128Mi"
+  networking:
+    tier: full
+  command: ["/bin/sh", "-c"]
+  args:
+    - |
+      set -e
+      # Target central by ClusterIP, not DNS. Burst-local CoreDNS forwards
+      # to public resolvers (1.1.1.1 / 100.100.100.100 / 8.8.8.8) — none of
+      # which know cluster.local — so a Service NAME can't resolve from a
+      # burst pod. Cilium kube-proxy-replacement (host-mode, full tier)
+      # translates the ClusterIP at the eBPF socket layer to a backend pod
+      # IP and routes it over the tailnet to the homelab.
+      #
+      # The ClusterIP is NOT hard-coded. yscaletest substitutes the
+      # __YSCALE_CLOUD_CLUSTERIP__ placeholder with the LIVE yscale-cloud
+      # Service ClusterIP at apply time (cmd/yscaletest/main.go
+      # resolveCentralClusterIP; override the lookup with -central-service
+      # / -central-namespace, default yscale-cloud / yscale). This keeps the
+      # fixture portable — a literal IP broke this case twice when a cluster
+      # migration changed yscale-cloud's ClusterIP underneath it.
+      #
+      # Use http://, NOT https://: yscale-cloud serves PLAIN HTTP on :8443
+      # (the port is merely *named* "https"). Curling https:// triggers a
+      # TLS handshake against a plaintext server → curl exit 35, which masks
+      # the fact that pod-to-pod routing actually works.
+      TARGET="http://__YSCALE_CLOUD_CLUSTERIP__:8443/healthz"
+      echo "[podtopod] GET ${TARGET}"
+      OUT=$(curl -sS --max-time 30 --retry 5 --retry-delay 3 "${TARGET}")
+      echo "[podtopod] response: ${OUT}"
+      if [ "${OUT}" = "ok" ]; then
+        echo "[podtopod] MARKER-OK pod-to-pod across CNI works"
+        exit 0
+      fi
+      echo "[podtopod] FAILED unexpected response"
+      exit 1
+  retries: 0
+  budget:
+    maxUSD: 0.05
+    deadline: 15m

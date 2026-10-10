@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "manifest_id": "malformed-tree-fixture",
+  "synthetic": true,
+  "release": {
+    "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "tested_head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "tree": "not-a-40-hex-tree-object-id"
+  },
+  "gates": [],
+  "supported_cells": []
+}

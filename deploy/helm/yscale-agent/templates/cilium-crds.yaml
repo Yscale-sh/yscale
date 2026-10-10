@@ -1,0 +1,27 @@
+{{- if and .Values.cilium.scaffold.enabled .Values.cilium.crds.enabled -}}
+{{- /*
+Cilium CRDs, rendered as ordinary templates so they reconcile on EVERY
+`helm upgrade` — unlike Helm's crds/ directory, which is applied only on first
+install (the previous caveat). The CRD YAML lives under files/cilium-crds/ and is
+emitted verbatim via .Files.Get (NOT run through the template engine), pinned to
+the Cilium version baked into the burst image (v1.19.4). To change the Cilium
+version: re-vendor files/cilium-crds/ AND rebuild the burst image — then a normal
+`helm upgrade` applies the new CRDs.
+
+Tradeoffs of templating CRDs (vs crds/):
+  - `helm uninstall` WILL delete these CRDs (and any CiliumEndpoint/Identity CRs).
+    Acceptable here: they are yscale-owned, created only for burst networking.
+  - On a release that previously got these CRDs from crds/ or `kubectl apply`
+    (no Helm ownership metadata), the first upgrade may report "invalid ownership
+    metadata". One-time fix: annotate them for adoption, e.g.
+      for c in $(kubectl get crd -o name | grep cilium.io); do
+        kubectl annotate "$c" meta.helm.sh/release-name=yscale-agent \
+          meta.helm.sh/release-namespace=yscale --overwrite
+        kubectl label "$c" app.kubernetes.io/managed-by=Helm --overwrite
+      done
+*/ -}}
+{{- range $path, $_ := .Files.Glob "files/cilium-crds/*.yaml" }}
+---
+{{ $.Files.Get $path }}
+{{- end }}
+{{- end -}}

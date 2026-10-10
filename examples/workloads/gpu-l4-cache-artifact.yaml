@@ -1,0 +1,75 @@
+# GPU workload with S3-compatible cache input and artifact output.
+#
+# Reads pre-trained model weights from an R2 bucket into a fast local
+# cache, runs a fine-tuning step on an L4 GPU, and writes checkpoints
+# back to a second R2 bucket as bounded artifacts.
+#
+# Prerequisites:
+#   1. Authorize the ml-team namespace in both central and the connector's
+#      rbac.allowedNamespaces configuration (see docs/pilot-onboarding.md).
+#   2. Create the namespace if needed, then create the credentials Secret in it:
+#        kubectl create namespace ml-team
+#        kubectl -n ml-team create secret generic r2-creds \
+#          --from-literal=AWS_ACCESS_KEY_ID=<your-key> \
+#          --from-literal=AWS_SECRET_ACCESS_KEY=<your-secret>
+#   3. Replace the placeholder bucket names and endpoint below with
+#      your actual Cloudflare account values.
+#
+# Use:
+#   yscale apply --dry-run -f examples/workloads/gpu-l4-cache-artifact.yaml
+#   yscale apply -f examples/workloads/gpu-l4-cache-artifact.yaml
+#
+# Watch with:
+#   kubectl -n ml-team get workloads -w
+#   kubectl -n ml-team get jobs,pods -l yscale.sh/workload=finetune-llama -w
+#
+# Cancel and request authoritative teardown by deleting the Workload CR:
+#   kubectl -n ml-team delete workload finetune-llama
+apiVersion: yscale.sh/v1
+kind: Workload
+metadata:
+  name: finetune-llama
+  namespace: ml-team
+spec:
+  backend: aws
+  image: nvcr.io/nvidia/pytorch:24.01-py3
+  gpu:
+    kind: l4
+    count: 1
+  size: medium
+  command: ["/bin/sh", "-c"]
+  args:
+    - |
+      echo "[finetune] cache mounted at /data/models"
+      ls /data/models/
+      echo "[finetune] running on $(hostname) with $(nvidia-smi -L)"
+      echo "[finetune] writing checkpoint to /outputs/checkpoints"
+      mkdir -p /outputs/checkpoints
+      echo '{"step": 1000, "loss": 0.42}' > /outputs/checkpoints/ckpt-1000.json
+      echo "[finetune] done"
+  retries: 0
+  budget:
+    maxUSD: 5.00
+    deadline: 2h
+  storage:
+    cache:
+      - name: base-weights
+        source:
+          bucket: acme-models
+          prefix: "llama-3/base/"
+          endpoint: "https://0123456789abcdef.r2.cloudflarestorage.com"
+          region: auto
+          credentialsSecret: r2-creds
+        target: /data/models
+        sizeHintGB: 16
+    artifacts:
+      - name: checkpoints
+        target: /outputs/checkpoints
+        to:
+          bucket: acme-runs
+          prefix: "finetune/checkpoints/"
+          endpoint: "https://0123456789abcdef.r2.cloudflarestorage.com"
+          region: auto
+          credentialsSecret: r2-creds
+        maxFiles: 50
+        maxSizeGB: 10

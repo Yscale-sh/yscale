@@ -1,0 +1,33 @@
+# syntax=docker/dockerfile:1.7
+
+# Self-contained yscale-factory image: builds from source, no host binary.
+# Cross-compiles on the build platform, so a multi-arch build needs no emulation.
+# The runtime matches Dockerfile.factory: ca-certificates for the Linode API and
+# Postgres TLS, and the coordination-box bootstrap files the factory renders.
+#
+#   docker buildx build -f factory/build/Dockerfile.factory.buildkit \
+#     --platform linux/amd64,linux/arm64 -t <registry>/yscale-factory:<tag> .
+FROM --platform=$BUILDPLATFORM golang:1.25.0-alpine AS build
+WORKDIR /src
+ENV CGO_ENABLED=0
+ARG TARGETOS
+ARG TARGETARCH
+
+COPY go.mod go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
+
+COPY . .
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+    go build -trimpath -ldflags="-s -w" \
+        -o /yscale-factory ./factory/cmd/yscale-factory
+
+FROM alpine:3.21
+RUN apk add --no-cache ca-certificates
+COPY --from=build /yscale-factory /usr/local/bin/yscale-factory
+WORKDIR /app
+COPY deploy/headscale/cloud-init.sh deploy/headscale/acls.hujson ./deploy/headscale/
+EXPOSE 8080 8081
+ENTRYPOINT ["/usr/local/bin/yscale-factory"]

@@ -1,0 +1,12 @@
+node_modules
+dist
+*.local
+.DS_Store
+
+# agent tooling artifacts
+.mission/
+bakes/
+fast.yaml
+
+# compiled Go server binary (build artifact)
+/server/website-server

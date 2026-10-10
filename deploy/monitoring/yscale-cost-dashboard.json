@@ -1,0 +1,151 @@
+{
+  "title": "yscale — cloud cost",
+  "uid": "yscale-cost",
+  "tags": ["yscale", "cost"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-24h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "label": "Prometheus",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {},
+        "hide": 0,
+        "refresh": 1,
+        "includeAll": false,
+        "multi": false
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Current burn rate ($/hr)",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "currencyUSD", "decimals": 3, "color": { "mode": "thresholds" }, "thresholds": { "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 0.5 }, { "color": "red", "value": 2 } ] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "sum(yscale_burst_hourly_usd)" } ]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Active bursts",
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 0, "color": { "mode": "thresholds" }, "thresholds": { "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 3 }, { "color": "red", "value": 8 } ] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "sum(yscale_burst_active)" } ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Projected monthly ($ at current burn + fixed)",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "currencyUSD", "decimals": 2, "color": { "mode": "fixed", "fixedColor": "blue" } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "sum(yscale_burst_hourly_usd) * 730 + sum(yscale_fixed_cost_usd_per_month)" } ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Fixed monthly overhead ($)",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "currencyUSD", "decimals": 2, "color": { "mode": "fixed", "fixedColor": "purple" } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "sum(yscale_fixed_cost_usd_per_month)" } ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Burn rate by backend ($/hr)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "currencyUSD", "decimals": 3, "custom": { "drawStyle": "line", "fillOpacity": 20, "stacking": { "mode": "normal" } } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull", "max"] }, "tooltip": { "mode": "multi" } },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "sum by (backend) (yscale_burst_hourly_usd)", "legendFormat": "{{backend}}" } ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Cumulative cloud spend by backend ($)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "currencyUSD", "decimals": 2, "custom": { "drawStyle": "line", "fillOpacity": 20, "stacking": { "mode": "normal" } } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull"] }, "tooltip": { "mode": "multi" } },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "sum by (backend) (yscale_cloud_cost_usd_total)", "legendFormat": "{{backend}}" } ]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Active bursts by backend",
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 12 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 0, "custom": { "drawStyle": "line", "fillOpacity": 30, "stacking": { "mode": "normal" } } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "sum by (backend) (yscale_burst_active)", "legendFormat": "{{backend}}" } ]
+    },
+    {
+      "id": 8,
+      "type": "piechart",
+      "title": "Spend share by backend",
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 12 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "currencyUSD", "decimals": 2 }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "values": ["value", "percent"] }, "reduceOptions": { "calcs": ["lastNotNull"] }, "pieType": "donut" },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "sum by (backend) (yscale_cloud_cost_usd_total)", "legendFormat": "{{backend}}" } ]
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Burst lifecycle (created vs reaped /hr)",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 12 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "bars", "fillOpacity": 60 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "sum(increase(yscale_bursts_created_total[$__rate_interval]))", "legendFormat": "created" },
+        { "refId": "B", "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "sum(increase(yscale_bursts_reaped_total[$__rate_interval]))", "legendFormat": "reaped" }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "stat",
+      "title": "Total cloud spend to date ($)",
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 20 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "currencyUSD", "decimals": 2, "color": { "mode": "fixed", "fixedColor": "green" } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "sum(yscale_cloud_cost_usd_total)" } ]
+    },
+    {
+      "id": 11,
+      "type": "stat",
+      "title": "Median burst lifetime",
+      "gridPos": { "h": 6, "w": 8, "x": 8, "y": 20 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "s", "decimals": 0, "color": { "mode": "fixed", "fixedColor": "blue" } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "histogram_quantile(0.5, sum by (le) (rate(yscale_burst_lifetime_seconds_bucket[1h])))" } ]
+    },
+    {
+      "id": 12,
+      "type": "table",
+      "title": "Fixed monthly cost by component",
+      "gridPos": { "h": 6, "w": 8, "x": 16, "y": 20 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "fieldConfig": { "defaults": { "unit": "currencyUSD", "decimals": 2 }, "overrides": [] },
+      "options": { "showHeader": true },
+      "targets": [ { "refId": "A", "datasource": { "type": "prometheus", "uid": "${datasource}" }, "expr": "yscale_fixed_cost_usd_per_month", "format": "table", "instant": true } ],
+      "transformations": [ { "id": "organize", "options": { "excludeByName": { "Time": true, "__name__": true, "job": true, "instance": true, "namespace": true, "service": true, "endpoint": true, "container": true, "pod": true } } } ]
+    }
+  ]
+}

@@ -1,0 +1,296 @@
+{
+  "schema_version": 1,
+  "manifest_id": "synthetic-cross-cloud-history",
+  "generated_at": "2026-09-25",
+  "release": {
+    "commit": "0000000000000000000000000000000000000000",
+    "tested_head": "0000000000000000000000000000000000000000",
+    "tree": "0000000000000000000000000000000000000000"
+  },
+  "gates": [
+    {
+      "id": "release-commit",
+      "required": true,
+      "status": "pending",
+      "missing": "Supply independently verified release-commit evidence bound to a real release identity before claiming operational readiness."
+    },
+    {
+      "id": "post-merge-ci",
+      "required": true,
+      "status": "pending",
+      "missing": "Supply independently verified post-merge-ci evidence bound to a real release identity before claiming operational readiness."
+    },
+    {
+      "id": "image-receipts",
+      "required": true,
+      "status": "pending",
+      "missing": "Supply independently verified image-receipts evidence bound to a real release identity before claiming operational readiness."
+    },
+    {
+      "id": "oss-export",
+      "required": true,
+      "status": "pending",
+      "missing": "Supply independently verified oss-export evidence bound to a real release identity before claiming operational readiness."
+    },
+    {
+      "id": "infra-revision",
+      "required": true,
+      "status": "pending",
+      "missing": "Supply independently verified infra-revision evidence bound to a real release identity before claiming operational readiness."
+    },
+    {
+      "id": "rollback-rehearsal",
+      "required": true,
+      "status": "pending",
+      "missing": "Supply independently verified rollback-rehearsal evidence bound to a real release identity before claiming operational readiness."
+    },
+    {
+      "id": "restore-rehearsal",
+      "required": true,
+      "status": "pending",
+      "missing": "Supply independently verified restore-rehearsal evidence bound to a real release identity before claiming operational readiness."
+    },
+    {
+      "id": "provider-qualification",
+      "required": true,
+      "status": "pending",
+      "missing": "Supply independently verified provider-qualification evidence bound to a real release identity before claiming operational readiness."
+    },
+    {
+      "id": "tenant-isolation-28",
+      "required": true,
+      "status": "pending",
+      "missing": "Supply independently verified tenant-isolation-28 evidence bound to a real release identity before claiming operational readiness.",
+      "subchecks": [
+        {
+          "id": "two-tenant-denial-live-mesh",
+          "status": "pending",
+          "missing": "Run and retain the two-tenant-denial-live-mesh check on the exact deployment being qualified."
+        },
+        {
+          "id": "admission-cap-concurrency",
+          "status": "pending",
+          "missing": "Run and retain the admission-cap-concurrency check on the exact deployment being qualified."
+        },
+        {
+          "id": "credential-scan-db-backup-log-image",
+          "status": "pending",
+          "missing": "Run and retain the credential-scan-db-backup-log-image check on the exact deployment being qualified."
+        },
+        {
+          "id": "crash-cleanup-ambiguous-create-delete",
+          "status": "pending",
+          "missing": "Run and retain the crash-cleanup-ambiguous-create-delete check on the exact deployment being qualified."
+        },
+        {
+          "id": "offboard-kill-switch-drill-scoped",
+          "status": "pending",
+          "missing": "Run and retain the offboard-kill-switch-drill-scoped check on the exact deployment being qualified."
+        },
+        {
+          "id": "threat-model-rbac-review",
+          "status": "pending",
+          "missing": "Run and retain the threat-model-rbac-review check on the exact deployment being qualified."
+        }
+      ]
+    },
+    {
+      "id": "workload-ops-38",
+      "required": true,
+      "status": "pending",
+      "missing": "Supply independently verified workload-ops-38 evidence bound to a real release identity before claiming operational readiness.",
+      "subchecks": [
+        {
+          "id": "logs-deployed-mesh",
+          "status": "pending",
+          "missing": "Run and retain the logs-deployed-mesh check on the exact deployment being qualified."
+        },
+        {
+          "id": "exec-deployed-mesh",
+          "status": "pending",
+          "missing": "Run and retain the exec-deployed-mesh check on the exact deployment being qualified."
+        },
+        {
+          "id": "port-forward-deployed-mesh",
+          "status": "pending",
+          "missing": "Run and retain the port-forward-deployed-mesh check on the exact deployment being qualified."
+        }
+      ]
+    },
+    {
+      "id": "credential-184",
+      "required": true,
+      "status": "pending",
+      "missing": "Supply independently verified credential-184 evidence bound to a real release identity before claiming operational readiness."
+    },
+    {
+      "id": "customer-policies",
+      "required": true,
+      "status": "pending",
+      "missing": "Supply independently verified customer-policies evidence bound to a real release identity before claiming operational readiness."
+    },
+    {
+      "id": "paid-activation",
+      "required": true,
+      "status": "pending",
+      "missing": "Supply independently verified paid-activation evidence bound to a real release identity before claiming operational readiness."
+    }
+  ],
+  "supported_cells": [
+    {
+      "provider": "linode",
+      "target": "k3s",
+      "compute": "gpu",
+      "networking": "full",
+      "status": "historically-tested",
+      "evidence": [
+        {
+          "type": "external",
+          "ref": "https://example.invalid/synthetic-history",
+          "note": "Synthetic regression data, not historical qualification evidence."
+        }
+      ]
+    },
+    {
+      "provider": "flyio",
+      "target": "k3s",
+      "compute": "cpu",
+      "networking": "full",
+      "status": "historically-tested",
+      "evidence": [
+        {
+          "type": "external",
+          "ref": "https://example.invalid/synthetic-history",
+          "note": "Synthetic regression data, not historical qualification evidence."
+        }
+      ]
+    },
+    {
+      "provider": "aws-ec2",
+      "target": "k3s",
+      "compute": "cpu",
+      "networking": "full",
+      "status": "historically-tested",
+      "evidence": [
+        {
+          "type": "external",
+          "ref": "https://example.invalid/synthetic-history",
+          "note": "Synthetic regression data, not historical qualification evidence."
+        }
+      ]
+    },
+    {
+      "provider": "aws-ec2",
+      "target": "gke",
+      "compute": "cpu",
+      "networking": "full",
+      "status": "historically-tested",
+      "evidence": [
+        {
+          "type": "external",
+          "ref": "https://example.invalid/synthetic-history",
+          "note": "Synthetic regression data, not historical qualification evidence."
+        }
+      ]
+    },
+    {
+      "provider": "linode",
+      "target": "eks",
+      "compute": "cpu",
+      "networking": "full",
+      "status": "historically-tested",
+      "evidence": [
+        {
+          "type": "external",
+          "ref": "https://example.invalid/synthetic-history",
+          "note": "Synthetic regression data, not historical qualification evidence."
+        }
+      ]
+    },
+    {
+      "provider": "flyio",
+      "target": "k3s",
+      "compute": "gpu",
+      "networking": "full",
+      "status": "unsupported"
+    },
+    {
+      "provider": "aws-ec2",
+      "target": "k3s",
+      "compute": "gpu",
+      "networking": "full",
+      "status": "unsupported"
+    },
+    {
+      "provider": "aws-ec2",
+      "target": "eks",
+      "compute": "cpu",
+      "networking": "full",
+      "status": "unsupported"
+    },
+    {
+      "provider": "aws-ec2",
+      "target": "eks",
+      "compute": "gpu",
+      "networking": "full",
+      "status": "unsupported"
+    },
+    {
+      "provider": "linode",
+      "target": "lke",
+      "compute": "cpu",
+      "networking": "full",
+      "status": "unsupported"
+    },
+    {
+      "provider": "linode",
+      "target": "lke",
+      "compute": "gpu",
+      "networking": "full",
+      "status": "unsupported"
+    },
+    {
+      "provider": "gcp",
+      "target": "k3s",
+      "compute": "cpu",
+      "networking": "full",
+      "status": "unsupported"
+    },
+    {
+      "provider": "gcp",
+      "target": "gke",
+      "compute": "cpu",
+      "networking": "full",
+      "status": "unsupported"
+    },
+    {
+      "provider": "gcp",
+      "target": "gke",
+      "compute": "gpu",
+      "networking": "full",
+      "status": "unsupported"
+    },
+    {
+      "provider": "azure",
+      "target": "k3s",
+      "compute": "cpu",
+      "networking": "full",
+      "status": "unsupported"
+    },
+    {
+      "provider": "azure",
+      "target": "k3s",
+      "compute": "gpu",
+      "networking": "full",
+      "status": "unsupported"
+    }
+  ],
+  "matrix_notes": [
+    "All-zero Git IDs are unset placeholders, not a published commit or a verified build.",
+    "No private deployment identities, historic receipts or operator notes are carried into this manifest.",
+    "Azure and GCP GPU configurations are outside launch scope.",
+    "Operational qualification and recovery: docs/operations.md. Consumer setup: docs/self-hosted-mesh.md.",
+    "The operational readiness validator retains its complete commercial-service checks. Source publication does not require operating a Yscale-hosted service."
+  ],
+  "synthetic": true
+}

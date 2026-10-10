@@ -1,0 +1,581 @@
+# --- Required ---
+# Tenant API token provisioned by the operator of your own central.
+# Either set `token` directly OR point `existingSecret` at a Secret
+# with key YSCALE_TOKEN.
+token: ""
+# Ephemeral Tailscale auth key for the agent sidecar. Tagged
+# `tag:yscale-agent`. Required unless existingSecret carries TS_AUTHKEY.
+tsAuthKey: ""
+existingSecret: ""
+
+# --- Identity ---
+# For the smoke-test "everything in one cluster" topology, point this
+# at the in-cluster yscale-cloud Service: ws://yscale-cloud.yscale:8443
+# For remote clusters, set your own central's TLS endpoint.
+endpoint: "ws://yscale-cloud.yscale:8443"
+# Full-release default: require a discovered or explicitly configured Headscale
+# login server. Set false only for an intentional legacy shared-Tailscale install.
+managedMesh: true
+clusterID: ""  # auto-generated and persisted to the PVC if blank
+
+# workloadNamespace scopes which namespace's Workload CRs (and pending pods)
+# this agent reconciles. Empty (default) = every namespace the RBAC below lets
+# it read: all of them under `rbac.scope: cluster`, each of
+# `rbac.allowedNamespaces` under the namespaced default. Set it when MULTIPLE
+# agents run on ONE physical cluster (separate teams sharing a cluster) so each
+# agent owns only its namespace's CRs and two agents never both submit the same
+# workload. Pair with a distinct clusterID per agent so their burst bootstrap
+# hostnames differ.
+workloadNamespace: ""
+
+# --- Idle burst teardown ---
+# nodeOnly bursts (the ones KEDA / Deployments / Argo trigger via a Pending pod)
+# back pods yscale never created, so nothing reports them finished when the
+# autoscaler scales back to zero. The connector watches those burst nodes and
+# asks central to tear one down once it has carried no schedulable pods for this
+# long. DaemonSet and static/mirror pods don't count as work; a pod list the
+# connector couldn't read counts as unknown, never as idle.
+#
+# REQUIRES cluster-wide pod visibility, and the chart grants that ONLY when
+# `rbac.scope: cluster` is set with `workloadNamespace` empty. Under any other
+# combination — including this chart's namespaced DEFAULT — the connector is told
+# it has no authoritative pod visibility and declines to run the watcher at all,
+# logging the reason at startup. A connector that can only see one namespace
+# cannot tell an idle burst node from one busy serving another team, and the safe
+# answer to that is not to guess.
+#
+# The namespaced default is a supported topology, not a misconfiguration. What it
+# means is that nothing can report those nodeOnly bursts idle, so their bound is
+# put on at ADMISSION instead: this connector tells central it has no authoritative
+# pod visibility, and central stamps a `budget.deadline` of
+# YSCALE_NODE_ONLY_MAX_LIFETIME (default 6h) onto any nodeOnly submission that
+# declares no budget of its own. Declare `budget.deadline` or `budget.maxUSD` if
+# you want a different bound — an explicit budget is never overridden. Do not
+# widen the namespaced RBAC with a cluster-wide Pod read to work around this.
+#
+# Set to 0 to disable. The connector then makes no occupancy claim either — it
+# would have nothing to back it with — so nodeOnly bursts are bounded exactly as
+# the namespaced default's are: by a declared `budget.deadline` / `budget.maxUSD`,
+# or by the admission deadline central stamps when neither is declared.
+idleTeardown:
+  grace: 10m
+
+# --- Occupancy observations ---
+# How often the connector re-states that it could still read the WHOLE cluster's
+# pods for a burst node — i.e. that it could have reported the node idle. That is
+# central's only liveness signal for nodeOnly capacity, which it expires after
+# YSCALE_NODE_ONLY_MAX_LIFETIME of silence rather than after a fixed lifetime.
+# Keep it well under that ceiling; the default leaves a wide margin under the
+# shipped 6h.
+#
+# It is NOT node health. A connector scoped to `workloadNamespace`, or one whose
+# RBAC does not allow a cluster-wide pod list, goes on reporting node health
+# perfectly well while being unable to ever ask for the teardown — so those
+# installs send no observations at all.
+#
+# The ceiling then does NOT apply to them, because it measures silence and those
+# connectors never claimed the capability that could go silent. Central bounds
+# their nodeOnly bursts with an admission deadline instead (see above); aging an
+# unclaimed burst out from its creation time destroyed active nodes for a feature
+# the default install never had.
+#
+# Sent only by the idle watcher, so `idleTeardown.grace: 0` switches these off —
+# and the CLAIM with them. A connector that will send no observations does not
+# tell central it can, because the silence ceiling would then have nothing to
+# measure from and would never expire the burst at all. Those bursts get the
+# admission deadline instead, exactly as a namespaced install's do.
+#
+# Set to 0 to send none. That withdraws the claim on its own, even with
+# `idleTeardown.grace` set: the watcher still runs and can still ask for a
+# teardown, but central bounds the capacity at admission rather than on silence.
+occupancyObserveInterval: 5m
+
+# imagePullSecrets are applied to the pod spec. The default image below is
+# public, so none is needed. If you build your own agent image into a private
+# registry, name its pull secret here:
+#
+#   --set agent.image.repository=<your-registry>/yscale-cluster-agent \
+#   --set 'imagePullSecrets[0].name=<your-secret>'
+imagePullSecrets: []
+
+# --- Agent container ---
+agent:
+  image:
+    # Published by this repository's release workflow for linux/amd64 and
+    # linux/arm64. An empty tag means the chart's appVersion: the release this
+    # chart shipped in. Pin `digest` from the release's images.txt in
+    # production.
+    repository: ghcr.io/yscale-sh/yscale-cluster-agent
+    tag: ""
+    # Optional immutable pin. When non-empty this takes precedence over `tag`
+    # and the Cluster Connector is deployed by content digest as
+    # `repository@sha256:<64 lowercase hex>`. Leave empty for local/dev
+    # tag-based deploys. A malformed value fails rendering even in dev.
+    digest: ""
+    # Production immutability switch. When true, rendering fails unless a valid
+    # `digest` is supplied — refuses to ship a mutable tag reference. Keep
+    # false for local/dev so the tag fallback stays usable.
+    requireDigest: false
+    pullPolicy: Always
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits:   { memory: 128Mi }
+  logLevel: info
+
+# --- Tailscale sidecar ---
+# Joins the customer-side agent pod to yscale's tailnet so burst nodes
+# can reach the agent's bootstrap endpoint by MagicDNS.
+#
+# Required: the existingSecret (or auto-generated Secret) must include
+# a TS_AUTHKEY key with an ephemeral, pre-authorized Tailscale auth key
+# minted with `tag:yscale-agent` (declared in the tailnet's ACL
+# tagOwners). See the deploy README for one-time tailnet setup.
+tailscale:
+  image:
+    repository: ghcr.io/tailscale/tailscale
+    tag: v1.80.3
+    pullPolicy: IfNotPresent
+  # Comma-separated tags advertised at `tailscale up`. Each tag must be
+  # in the tailnet's ACL tagOwners block AND must be a tag the agent's
+  # auth key (TS_AUTHKEY) is allowed to claim.
+  tags: "tag:yscale"
+  # Managed-mesh default: discover login_server from central's key-mint
+  # response. For pre-minted authKeySecret installs, set this explicitly to
+  # your tenant's Headscale URL; no mint response exists to discover it from.
+  tsLoginServer: ""
+  # Accept subnet routes advertised by peers. Required when the connector
+  # reaches a private central endpoint through the coordination network.
+  # Public-central installs leave this disabled.
+  acceptRoutes: false
+  # Optional pre-minted key. When set, the chart skips the central auth-key
+  # init request and mounts this Secret directly. This is primarily for
+  # private-control-plane installs where the connector must join its private
+  # coordination network
+  # before it can reach central.
+  authKeySecret:
+    name: ""
+    key: TS_AUTHKEY
+  # Route the connector's outbound central WebSocket through tailscaled's
+  # userspace HTTP proxy. Needed when central is private on this coordination
+  # network; ordinary public-central installs leave it disabled.
+  outboundHTTPProxy:
+    enabled: false
+    listen: "127.0.0.1:1055"
+    noProxy: "127.0.0.1,localhost,.svc,.cluster.local,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,.amazonaws.com"
+  # Subnet routes the agent advertises into the tailnet. Burst nodes
+  # use the service CIDR (10.43.0.0/16) to reach kube-apiserver at
+  # https://10.43.0.1:443 (their kubelet bootstrap-kubeconfig points
+  # there). Pod CIDR (10.42.0.0/16) is included so pods on bursts can
+  # talk to in-cluster pods. These routes must be APPROVED in the
+  # Tailscale admin console after install (one-time per agent device).
+  routes: "10.43.0.0/16,10.42.0.0/16"
+  resources:
+    requests: { cpu: 25m, memory: 64Mi }
+    limits:   { memory: 128Mi }
+
+# --- Persistent state (cluster-id) ---
+persistence:
+  enabled: true
+  size: 64Mi
+  storageClass: ""          # "" = default; "-" = disable PVC
+
+# --- RBAC: namespaced is the default per project policy. Set
+#     scope: cluster only when the customer wants workloads anywhere.
+#
+#     scope ALSO decides whether the connector is credited with authoritative
+#     cluster-wide pod visibility: `cluster` with an empty workloadNamespace is
+#     the only combination that enables the idle burst-node watcher and the
+#     occupancy observations central's silence ceiling measures from. See
+#     idleTeardown above for what the namespaced default implies.
+rbac:
+  create: true
+  scope: namespaced         # "namespaced" | "cluster"
+  # Namespaces the agent is allowed to touch. Required when scope ==
+  # namespaced. Each namespace must already exist; the chart does not
+  # create them (avoids accidental allowlist by namespace creation).
+  #
+  # This list ALSO scopes the connector's `get` on storage-credentials
+  # Secrets, and it is the only thing that does — scope: cluster does
+  # not widen it, because a cluster-wide Secret grant is the exposure
+  # namespace-scoped signing exists to remove. A workload whose
+  # spec.storage names a credentialsSecret can only be signed for if its
+  # namespace is listed here. Keep it identical to the tenant's
+  # authorized workload namespaces in central; the two are independent
+  # gates on the same boundary and only help if they agree.
+  allowedNamespaces:
+    - default
+
+# --- Customer cluster cloud-provider ---
+# Drives sensible defaults for the cluster's coredns ClusterIP and
+# for the providerID-prefix workaround that keeps bursts alive
+# against opinionated cloud-controller-managers (LKE, EKS, GKE,
+# AKS). Set this to skip cluster-specific overlay files — the chart
+# computes the right `cluster.dnsIP` and the right burst-provider-ID
+# prefix from this one switch.
+#
+# Valid values:
+#   linode         — LKE managed cluster (Linode CCM)
+#   aws            — EKS managed cluster (AWS CCM)
+#   gcp            — GKE managed cluster (GCP CCM)
+#   azure          — AKS managed cluster (Azure CCM)
+#   k3s            — self-managed k3s (no CCM; homelab pattern)
+#   self-managed   — kubeadm-style self-managed (no CCM)
+#   ""             — operator must explicitly set cluster.dnsIP + accept
+#                    burst's default linode://yscale-burst-<id> providerID
+cloudProvider: ""
+
+# --- Cluster facts ---
+# These are the customer cluster's own configuration, NOT yscale's.
+# Leave empty to let the chart derive defaults from cloudProvider.
+cluster:
+  # Cluster service network's coredns/kube-dns ClusterIP. Stamped into
+  # bursts via CLUSTER_DNS env (consumed by kubelet --cluster-dns).
+  # Pod DNS resolution on bursts fails if this is wrong. Defaults
+  # computed from cloudProvider:
+  #   linode/self-managed (kubeadm) → 10.96.0.10
+  #   aws (EKS, default VPC CNI)    → 172.20.0.10
+  #   gcp                           → 10.0.0.10
+  #   azure                         → 10.0.0.10
+  #   k3s                           → 10.43.0.10
+  dnsIP: ""
+  # Cluster's service-DNS suffix. Almost always "cluster.local".
+  domain: "cluster.local"
+
+# --- Burst providerID format ---
+# When a burst kubelet registers a Node, what string to set as
+# spec.providerID. Used to bypass cloud-controller-manager's
+# "delete nodes not in this cloud" reconciliation loop on managed
+# clusters (e.g. LKE, which reaps foreign nodes ~75-90s after Ready).
+#
+# Format is `<cloud-prefix>yscale-burst-<id>` so the matching CCM
+# parses the prefix but fails on the non-integer suffix → returns
+# a non-NotFound error → upstream node lifecycle controller keeps
+# retrying instead of deleting. Verified for Linode CCM; AWS / GCP /
+# Azure CCMs follow the same pattern (each cloud's CCM only acts on
+# its own prefix; ParseProviderID variants reject malformed IDs with
+# typed errors, not InstanceNotFound).
+#
+# Defaults computed from cloudProvider:
+#   linode  → linode://yscale-burst-<BURST_ID>
+#   aws     → aws://yscale-burst-<BURST_ID>
+#   gcp     → "" (GKE admission rejects non-GCE providerIDs;
+#             burst omits --provider-id entirely)
+#   azure   → azure://yscale-burst-<BURST_ID>
+#   k3s     → "" (no CCM to satisfy)
+#   ""      → linode://yscale-burst-<BURST_ID> (safe default — Linode prefix
+#             is ignored by non-Linode CCMs; only Linode parses it)
+#
+# This value is plumbed agent → central → burst kubelet --provider-id
+# arg. Central-side plumbing landing in a future PR; for now the
+# burst's entrypoint uses linode://yscale-burst-${BURST_ID} as a
+# hardcoded default that's safe across all clusters.
+burst:
+  providerIDOverride:
+    enabled: true
+    format: ""
+
+# --- Bootstrap token endpoint ---
+# Reachable from bursts at `http://yscale-agent-<cluster-id>:8080` via
+# MagicDNS. This endpoint mints kubelet bootstrap tokens and signs
+# bucket URLs, so where it binds is a security boundary, not a
+# preference — see listenMode.
+bootstrap:
+  enabled: true
+  port: 8080
+  # Standard Kubernetes distributions authenticate kubeadm-style
+  # bootstrap-token Secrets. Managed EKS deliberately does not; select
+  # `eks` there and configure the zero-permission IAM role registered through
+  # an EKS HYBRID_LINUX access entry. The burst kubelet renews this credential.
+  # GKE 1.35+ rejects bootstrap-token Secrets; select `gke` there. The agent
+  # creates a unique per-burst ServiceAccount + ClusterRoleBinding to
+  # system:node-bootstrapper, mints a short-lived SA token via TokenRequest,
+  # and cleans up on teardown.
+  authMode: kubernetes-token
+  eks:
+    clusterName: ""
+    region: ""
+    bootstrapRoleARN: ""
+  # listenMode picks the interface the endpoint binds to. The agent is
+  # a Pod: binding all interfaces would also publish it on the cluster
+  # pod IP, where the tailnet ACL cannot reach it.
+  #   loopback (default) — 127.0.0.1:<port>. Right for this chart: the
+  #     tailscale sidecar runs userspace (TS_USERSPACE=true), so it has
+  #     no interface address and `tailscale serve` forwards inbound
+  #     tailnet TCP to loopback inside the pod. Unreachable from every
+  #     other pod in the cluster.
+  #   tailnet — the agent resolves tailscaled's own 100.64.0.0/10
+  #     address and binds only that, and fails closed (no listener, and
+  #     the connector exits) when there isn't one. Requires a
+  #     KERNEL-mode tailscaled in this pod's network namespace, which
+  #     this chart's own sidecar is NOT — it is hardcoded userspace. Use
+  #     this only when you supply the tailscaled yourself.
+  #   custom — bind listenAddress verbatim. The only way to get a
+  #     wildcard (0.0.0.0:<port>), and it undoes the isolation above.
+  #
+  # The `tailscale serve` forward is derived from this same setting, so
+  # the tailnet-side port and the in-pod target cannot drift apart.
+  listenMode: loopback
+  listenAddress: ""
+  # apiserverURL is the URL written into burst-node bootstrap-kubeconfigs.
+  # Must be reachable from the burst (i.e. on the tailnet) AND the cert
+  # SAN must include the URL hostname — kubelet's post-bootstrap
+  # kubeconfig loses any tls-server-name override, so cert hostname
+  # validation is strict. For k3s, the control-plane node's hostname
+  # is in the API server cert by default and is MagicDNS-resolvable
+  # from anywhere on the tailnet — replace the placeholder below with
+  # your control-plane node's actual tailnet hostname (see
+  # values-lke.yaml for a managed-Kubernetes example).
+  apiserverURL: "https://<your-apiserver-host>:6443"
+
+# --- Service account ---
+serviceAccount:
+  create: true
+  name: ""                  # auto-generated when blank
+  annotations: {}
+
+# --- Pod-level ---
+priorityClassName: system-cluster-critical
+nodeSelector: {}
+tolerations: []
+affinity: {}
+podAnnotations: {}
+podLabels: {}
+
+# --- Tailscale subnet router (joined-CNI underlay) ---
+# Per-node DaemonSet that runs tailscaled, advertises that node's pod
+# CIDR (read from spec.podCIDR via the apiserver) over the tailnet, and
+# accepts the burst-side route advertisements. Together with the
+# burst-side `tailscale up --advertise-routes=$POD_CIDR` baked into the
+# burst image, this carries pod-CIDR routing in BOTH directions across
+# the tailnet — the joined-CNI primitive. See docs/JOINED-CNI.md.
+#
+# Disable on the operator's own homelab — it already runs host-level
+# tailscaled and would conflict.
+subnetRouter:
+  # Default OFF. The DaemonSet runs pod-mode kernel `tailscaled`
+  # which fights host-level `tailscaled` for iptables ownership and
+  # tears down the host's tailnet on any cluster that runs host
+  # tailscaled (as homelab nodes typically do). Customers who want
+  # joined-CNI pod routability flip this to `true` in their values
+  # overlay. See docs/JOINED-CNI.md.
+  enabled: false
+  image:
+    repository: ghcr.io/tailscale/tailscale
+    tag: v1.80.3
+    pullPolicy: IfNotPresent
+  # Self-hosted coordination-server users override this. Empty == Tailscale-hosted (default).
+  tsLoginServer: ""
+  # Secret carrying TS_AUTHKEY. Defaults to a chart-managed Secret if
+  # name is empty. The key must be minted with `tag:yscale`, which is the
+  # tag bursts, the agent and the subnet router all share — there is no
+  # `tag:yscale-router`. Route approval for the burst pool is written by
+  # central on the customer's coordination server, and only there: on the
+  # shared Tailscale tailnet central pushes no route approvers at all, so
+  # approval is a manual out-of-band ACL.
+  authKeySecret:
+    name: ""                # default: <release>-subnet-router
+    key: TS_AUTHKEY
+  resources:
+    requests: { cpu: 25m, memory: 64Mi }
+    limits:   { memory: 128Mi }
+
+# --- Gateway sidecar ---
+#
+# Cross-cluster pod-to-pod gateway. Single Deployment, pod-network (NOT
+# hostNetwork — avoids the host-tailscaled iptables conflict described
+# above on subnetRouter). Runs tailscaled with --advertise-routes
+# for the customer pod CIDR; net.ipv4.ip_forward=1 forwards arriving
+# tailnet packets onto the customer CNI, masqueraded to the gateway's
+# own pod IP. That SNAT is the return path and must stay on: the cluster
+# has no route for the burst pod supernet 10.244.0.0/16, so a reply
+# addressed to the burst's real IP is dropped, while a reply addressed
+# to the gateway is ordinary pod-to-pod traffic that conntrack here
+# un-rewrites and sends back over the tailnet. It comes from tailscaled's
+# subnet-router default (NoSNAT: false); never pass
+# --snat-subnet-routes=false. Identity propagation between bursts and
+# customer pods is automatic via apiserver-shared CiliumEndpoint CRDs — no
+# Cluster Mesh required — but the SNAT costs *source* identity, so
+# in-cluster NetworkPolicy sees the gateway rather than an individual burst.
+#
+# Architectural overview: docs/architecture.md (networking tiers).
+# Operator prerequisite (one-time tailnet ACL setup):
+#   docs/oss-quickstart.md §0 (tagOwners + autoApprovers.routes)
+#
+# Default ON. With advertiseRoutes empty, the agent auto-detects the
+# customer cluster routes at startup and writes them to the
+# yscale-gateway-routes ConfigMap consumed by the gateway.
+#
+# Probe the relevant CIDRs with:
+#   kubectl get nodes -o jsonpath='{.items[*].spec.podCIDR}'   # pod CIDR
+#   kubectl get svc kubernetes -o jsonpath='{.spec.clusterIP}' # then /16 around it = Service CIDR
+gateway:
+  enabled: true
+  # Optional override. When empty, the agent auto-detects these routes
+  # from exact runtime sources plus provider-table defaults. When set,
+  # this list is used verbatim by both the agent and gateway. For full
+  # cross-cluster operation you almost always want THREE entries:
+  #
+  #   1. The customer cluster's pod CIDR — so burst pods can reach
+  #      customer pods by Pod IP.
+  #   2. The customer cluster's Service CIDR — so burst pods can reach
+  #      customer Services by ClusterIP. Without this, burst-side
+  #      kube-proxy-replacement / DNS-resolved Service lookups time out.
+  #      (Validated empirically 2026-05-26: omitting this caused all
+  #      Service IP curls from bursts to hang for 10s.)
+  #   3. The customer cluster's node LAN CIDR — only needed when
+  #      `bootstrap.apiserverURL` uses a node IP (rather than a
+  #      tailnet-resolvable name). Required for the burst kubelet to
+  #      reach the customer apiserver through the gateway.
+  #
+  # Common defaults — copy these as a starting point, then trim to fit:
+  #   k3s (homelab):     ["10.42.0.0/16", "10.43.0.0/16", "10.0.0.0/24"]
+  #   kubeadm:           ["10.244.0.0/16", "10.96.0.0/12", "<node-lan>"]
+  #   EKS (VPC CNI):     ["<vpc-cidr>", "172.20.0.0/16"]
+  #   GKE:               ["10.0.0.0/14", "10.1.0.0/20"]
+  #
+  # ACL prerequisite: each CIDR here must have a matching `autoApprovers`
+  # entry on the tailnet ACL for `tag:yscale-gateway`. See
+  # docs/oss-quickstart.md §0 for the one-time ACL setup.
+  #
+  # `customerPodCIDRs` is the legacy name — still accepted but
+  # `advertiseRoutes` is the canonical field going forward.
+  advertiseRoutes: []
+  customerPodCIDRs: []  # deprecated alias for advertiseRoutes
+  image:
+    repository: tailscale/tailscale
+    tag: v1.80.3           # match burst-side TS version in burst/image/Dockerfile.kubelet.base
+    pullPolicy: IfNotPresent
+  # Managed-mesh default: discover login_server from central's key-mint
+  # response. With a pre-minted gateway authKeySecret, set the tenant's
+  # Headscale URL explicitly, just as for the connector sidecar above.
+  tsLoginServer: ""
+  # Optional pre-minted gateway key; mirrors tailscale.authKeySecret.
+  authKeySecret:
+    name: ""
+    key: TS_AUTHKEY
+  # -- Namespace of the in-cluster `yscale-cloud` central Service. Feeds
+  # ONLY the Helm `lookup` that renders the gateway Deployment's
+  # hostAliases /etc/hosts pin — the gateway pod runs dnsPolicy None
+  # (public resolvers), so that pin is the only way its init container
+  # can resolve central. Empty (default) == look the Service up in the
+  # release's own namespace, the unchanged single-release behaviour. Set
+  # it when the release is installed outside central's namespace: a
+  # release in yscale-system with central at yscale/yscale-cloud needs
+  # `centralServiceNamespace: yscale`. The pinned hostnames stay the
+  # canonical yscale-cloud.yscale forms; `endpoint` is unaffected.
+  centralServiceNamespace: ""
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits:   { memory: 256Mi }
+  # Fallback for clusters whose PodSecurity policy blocks pod-level
+  # sysctls (net.ipv4.ip_forward). When true, a privileged
+  # initContainer runs `sysctl -w net.ipv4.ip_forward=1` on the host
+  # kernel — affects ALL pods on the node, not just this one. Only
+  # use when pod-level sysctls aren't available (k8s <1.27 or
+  # restricted PodSecurity).
+  enableForwardingViaInitContainer: false
+  # Optional scheduling hints. Useful on the operator's homelab to
+  # avoid co-scheduling with hosts that already run tailscaled (would
+  # not cause a conflict at the pod-network layer, but reduces
+  # debugging confusion when comparing devices on the tailnet).
+  nodeSelector: {}
+  tolerations: []
+  priorityClassName: system-cluster-critical
+
+  # --- Transparent kubelet logs/exec/attach routing (opt-in) ---
+  # For stock-kubelet burst nodes, `kubectl logs/exec/attach` works only
+  # if the K3s apiserver can dial the burst kubelet directly. With
+  # `egress-selector-mode: disabled`, the apiserver dials each burst
+  # kubelet at its Tailnet CGNAT IP on :10250. Stock burst kubelets do
+  # NOT run a K3s agent tunnel, so the control-plane host needs a route
+  # to the Tailnet CGNAT range through THIS chart's gateway pod (which
+  # already terminates the tailnet). When enabled, a dedicated
+  # hostNetwork DaemonSet runs on every node and continuously reconciles
+  # that host route, following the gateway pod even when it lives on a
+  # different Kubernetes node. On hosts that also run tailscaled, it owns a
+  # narrow INPUT exception for ESTABLISHED/RELATED replies from this CIDR;
+  # tailscaled's anti-spoof rule otherwise drops gateway-relayed replies that
+  # arrive outside tailscale0.
+  #
+  # Leaves all other gateway/subnetRouter behavior untouched. Requires
+  # gateway.enabled=true — it routes THROUGH the gateway pod, so it is a
+  # no-op when the gateway is disabled.
+  #
+  # PREREQUISITES:
+  #   * K3s control planes MUST run with `egress-selector-mode: disabled`
+  #     (set it in /etc/rancher/k3s/config.yaml, or pass
+  #     `--egress-selector-mode=disabled`). Without it the apiserver
+  #     dials kubelets through the (absent) K3s agent tunnel and
+  #     logs/exec/attach hang.
+  #   * Central tailnet policy MUST allow ONLY the validated cluster
+  #     route CIDRs to reach `tag:yscale` on :10250 — the burst kubelet
+  #     read/exec/attach port. Do not widen this; :10250 is remote
+  #     code-exec surface.
+  kubeletProxyRouting:
+    enabled: false
+    # Tailnet CGNAT range the burst kubelets' Tailnet IPs live in. The
+    # host route for this CIDR is pointed at the gateway pod. Default is
+    # the full Tailscale CGNAT block; narrow it only if your tailnet
+    # assigns burst nodes from a sub-range.
+    destinationCIDR: "100.64.0.0/10"
+    # How often (seconds) to re-resolve the gateway pod and reconcile the
+    # host route, so a gateway restart or reschedule updates the next-hop
+    # without a Helm reinstall.
+    reconcileInterval: 30
+
+# --- Namespace ---
+namespace:
+  create: false             # set true to create the release namespace
+
+# installCRD: install the cluster-scoped Workload CRD. Default true.
+# Set false for an ADDITIONAL agent release on a cluster that already has it
+# (only one helm release may own a cluster-scoped CRD).
+installCRD: true
+
+# --- Cilium "of-one" scaffolding (for tier=full bursts) ---
+# Installs the cilium SA + RBAC + cilium-config ConfigMap (and the Cilium CRDs
+# from the chart's crds/ dir) so tier=full bursts can run host-mode Cilium
+# against THIS cluster WITHOUT the customer running Cilium as their CNI. The
+# customer's own CNI (flannel/Calico/VPC-CNI/...) is left untouched; only burst
+# nodes run cilium-agent (a host process baked into the burst image).
+#
+# This replaces the manual deploy/quickstart/seed-cilium-scaffolding.sh — it's
+# now installed in one shot with the agent and the config auto-reconciles on
+# every `helm upgrade` (bursts fetch cilium-config at boot, so new bursts pick
+# up changes). CRD version bumps are the only non-automatic part (crds/ is
+# install-once per Helm; re-vendor crds/ + bump the burst image when changing it).
+cilium:
+  crds:
+    # Render the yscale-pinned Cilium CRDs as Helm-managed templates. Existing
+    # clusters whose CRDs are owned externally can set this false while keeping
+    # the yscale Cilium scaffold (SA/RBAC/config) enabled.
+    enabled: true
+  scaffold:
+    # Set FALSE for a customer that already runs Cilium (would clobber their
+    # kube-system/cilium-config). Default true = yscale provides the shim.
+    enabled: true
+  # Mirrored verbatim into kube-system/cilium-config. Tunable; auto-reconciled.
+  config:
+    identity-allocation-mode: crd          # agent self-allocates CiliumIdentity CRDs; no operator/kvstore
+    ipam: kubernetes                        # burst reads its KCM-allocated Node.spec.podCIDR (within the cluster pod CIDR the gateway advertises)
+    enable-ipv4: "true"
+    enable-ipv6: "false"
+    enable-ipv4-masquerade: "true"
+    routing-mode: native                    # no encap; burst egresses to the cluster via the gateway route
+    tunnel-protocol: disabled               # was vxlan (contradicts native routing)
+    kube-proxy-replacement: "true"          # bursts are island nodes with NO kube-proxy; eBPF socket-LB resolves ClusterIPs
+    enable-host-firewall: "false"
+    enable-hubble: "false"
+    enable-bandwidth-manager: "false"
+    enable-bgp-control-plane: "false"
+    enable-bpf-clock-probe: "false"
+    enable-endpoint-health-checking: "true"
+    enable-l7-proxy: "false"
+    enable-policy: default
+    cluster-name: default
+    cluster-id: "0"
+    install-iptables-rules: "true"
+    enable-runtime-device-detection: "true"
+    monitor-aggregation: medium
+    preallocate-bpf-maps: "false"
+    socket-lb-tracing: "false"

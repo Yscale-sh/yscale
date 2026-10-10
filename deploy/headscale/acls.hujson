@@ -1,0 +1,144 @@
+// yscale:proprietary
+
+// acls.hujson — TEMPLATE Headscale ACL policy for ONE customer's box,
+// tuned for FULL networking mode (host-mode Cilium on bursts; real
+// cross-cluster pod-to-pod + ClusterIP reachability through the gateway).
+//
+// Headscale parses the Tailscale ACL format (HuJSON: JSON + comments +
+// trailing commas) verbatim, so this is a stock Tailscale policy file.
+//
+// ── RENDERED PER-CUSTOMER AT PROVISION TIME ──────────────────────────
+// provision.sh substitutes:
+//   <CUSTOMER>  → the customer slug / HS_USER (e.g. "acme")
+//   <POD_CIDR>  → the customer cluster's pod CIDR     (e.g. 10.42.0.0/16)
+//   <SVC_CIDR>  → the customer cluster's service CIDR (e.g. 10.43.0.0/16)
+// and asserts NO placeholder remains before the policy is applied. The box
+// then loads it on-boot via `headscale policy set` (see cloud-init.sh).
+//
+// ── TAG NAMES MATCH THE CLIENTS (load-bearing) ───────────────────────
+// The in-cluster components and bursts advertise FIXED tag names (the same
+// ones the shared-Tailscale path uses, so the data-plane code is identical
+// across mesh backends):
+//   tag:yscale          → agent (deviceKindSpec), burst (decider tsTagsFor),
+//                         and the subnet-router DaemonSet
+//   tag:yscale-gateway  → the gateway sidecar (advertises pod+svc CIDRs)
+// A node may only self-assign a tag the policy's tagOwners authorize (or a
+// forced tag carried by its preauth key). If these names don't match what
+// the clients pass to `tailscale up --advertise-tags`, registration is
+// unauthorized and the node never joins. (Proven against headscale 0.26.1,
+// 2026-05-31: with no policy loaded, tag:yscale was unowned and joins failed.)
+//
+// ── ISOLATION MODEL: structural, NOT ACL-based ───────────────────────
+// Each Headscale control-plane VM serves EXACTLY ONE customer — its own
+// coordination server, DB, noise key, and embedded DERP. A node from
+// customer B literally cannot register against customer A's box, so
+// cross-customer isolation is a property of *physical separation*, not of
+// this policy. A broken/over-permissive ACL here can therefore only ever
+// over-share *within this one customer* — never a cross-tenant breach.
+//
+// NOTE (hardening follow-up): because the clients use the COARSE tag:yscale
+// for agent+burst+router, this policy can't (yet) cap yscale-ops to
+// bursts-only the way a per-role tag scheme would. yscale-ops is
+// therefore omitted here; add it back with a
+// finer client tag scheme when hardening. The intra-customer mesh is the
+// only thing this policy needs to authorize for full mode to work.
+{
+  "groups": {
+    // The admin/apikey identity that owns this single-customer box. Member is
+    // the Headscale user pre-created by cloud-init (HS_USER). Policy v2
+    // (Headscale 0.26+) requires usernames to carry an '@' suffix.
+    "group:<CUSTOMER>-admin": ["<CUSTOMER>@"],
+  },
+
+  "tagOwners": {
+    // Both client tags are owned by this box's admin so nodes may self-assign
+    // them at `tailscale up --advertise-tags` time.
+    "tag:yscale":         ["group:<CUSTOMER>-admin"],
+    "tag:yscale-gateway": ["group:<CUSTOMER>-admin"],
+  },
+
+  // autoApprovers.routes: which advertised routes auto-approve (so no admin
+  // has to run `headscale nodes approve-routes` by hand). FULL MODE needs BOTH
+  // the pod CIDR (cross-cluster pod-to-pod) and the service CIDR (ClusterIP
+  // reachability — empirically, omitting svc CIDR hangs all Service curls from
+  // bursts). The gateway advertises these; bursts --accept-routes them. The
+  // node LAN CIDR is deliberately NOT auto-approved: address the apiserver by
+  // a tailnet-resolvable name so bursts never need the customer's broader
+  // network. If a deployment must address the apiserver by node IP, add that
+  // LAN CIDR here explicitly and knowingly.
+  "autoApprovers": {
+    "routes": {
+      "<POD_CIDR>":  ["tag:yscale-gateway"],
+      "<SVC_CIDR>":  ["tag:yscale-gateway"],
+      // Node LAN CIDR: the gateway also advertises the cluster node network
+      // so bursts can reach the apiserver by node IP (e.g. 192.0.2.10:6443)
+      // to complete kubelet bootstrap. WITHOUT auto-approving this, the
+      // burst's advertised route stays pending, the burst can't reach the
+      // apiserver, kubelet bootstrap loops, and the Node never joins (pod
+      // stays Pending forever). Proven 2026-05-31. Matches gateway
+      // advertiseRoutes in deploy/helm/yscale-agent/values.yaml.
+      "<NODE_CIDR>": ["tag:yscale-gateway"],
+    },
+  },
+
+  // acls: an explicit allowlist == default-deny for anything not listed.
+  // (Headscale, like Tailscale, ALLOWS ALL if `acls` is omitted — so this
+  // block must always be present.) Single-tenant box, so the full-mode mesh
+  // (agent/burst/router on tag:yscale + gateway on tag:yscale-gateway) may
+  // reach each other on all ports; these sets can never name another
+  // customer's machines.
+  "acls": [
+    {
+      // (1) The full-mode intra-customer MESH: the roles reach each other.
+      "action": "accept",
+      "src": ["tag:yscale", "tag:yscale-gateway"],
+      "dst": ["tag:yscale:*", "tag:yscale-gateway:*"],
+    },
+    {
+      // (2) ROUTE DISTRIBUTION (load-bearing, do not remove). Approving a
+      // subnet route via autoApprovers above is NOT sufficient for Headscale
+      // 0.26 to place it in peers' netmap AllowedIPs — the policy must ALSO
+      // have an `accept` rule whose dst includes the route CIDRs. Without this
+      // rule the gateway's routes show approved+available+subnetRoutes on the
+      // box, yet every peer's AllowedIPs for the gateway is EMPTY, so the burst
+      // never installs the route to the apiserver (a node IP inside the node CIDR),
+      // kubelet can't reach it, no CSR, the Node never joins, the pod hangs
+      // Pending. Proven against headscale 0.26.1, 2026-05-31: adding this rule
+      // immediately populated the gateway peer's AllowedIPs with all three
+      // CIDRs. The CIDRs MUST match autoApprovers.routes above.
+      "action": "accept",
+      "src": ["tag:yscale", "tag:yscale-gateway"],
+      "dst": ["<POD_CIDR>:*", "<SVC_CIDR>:*", "<NODE_CIDR>:*"],
+    },
+    {
+      // (3) KUBELET TRANSPARENCY (kubectl logs/exec/attach). The apiserver
+      // dials each burst's stock kubelet at :10250; that traffic reaches the
+      // burst through the gateway sourced from the customer's cluster route
+      // CIDRs. Allow those CIDRs to reach the burst/agent tag on the kubelet
+      // port ONLY — never all ports, never the bootstrap :8080, never the
+      // gateway tag. Mirrors the central-generated policy's kubelet rule
+      // (meshpolicy.BuildPolicy). Src MUST match autoApprovers.routes above.
+      "action": "accept",
+      "proto": "tcp",
+      "src": ["<POD_CIDR>", "<SVC_CIDR>", "<NODE_CIDR>"],
+      "dst": ["tag:yscale:10250"],
+    },
+  ],
+
+  // tests: self-verifying assertions evaluated AT POLICY-LOAD TIME (Headscale
+  // policy v2 / requires v0.26+). If any assertion fails, Headscale REJECTS
+  // the policy and keeps the previous one — so an edit that breaks the
+  // intra-customer mesh cannot take effect. `src` is a single identity;
+  // `accept` is a list of "dst:port".
+  "tests": [
+    {
+      // The full-mode mesh must work: a burst/agent (tag:yscale) must reach
+      // the agent's bootstrap endpoint (:8080) and the gateway (:443).
+      "src": "tag:yscale",
+      "accept": [
+        "tag:yscale:8080",
+        "tag:yscale-gateway:443",
+      ],
+    },
+  ],
+}

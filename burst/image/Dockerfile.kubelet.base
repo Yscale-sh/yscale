@@ -1,0 +1,235 @@
+# Composite base for the burst-node image. Holds every heavy download
+# (kubelet, containerd, tailscale, CNI, runc) so iterations on
+# entrypoint-kubelet.sh only rebuild the final 5-line layer.
+#
+# Rebuild manually when bumping any *_VERSION arg below:
+#   make burst-base-image-push
+#
+# The runtime image (Dockerfile.kubelet) does `FROM` this image, so
+# every workflow that touches the entrypoint becomes a sub-10s push.
+
+# Cilium prebake was DROPPED 2026-05-25. Even with the correct
+# destination tag (registry.fly.io/yscale-burst-image:cilium-vX.Y.Z),
+# the `ctr import` step at burst boot hangs on Fly's fuse-overlayfs
+# snapshotter during the unpack/commit phase. The 60s timeout fires,
+# leaves a PARTIAL snapshot in containerd, and the Cilium init
+# container then fails with "parent snapshot ... does not exist" —
+# kubelet sees the image "already present" but can't materialize the
+# container rootfs, retries forever.
+#
+# Resolution: don't prebake. Cilium image lives at
+# registry.fly.io/yscale-burst-image:cilium-vX.Y.Z (Fly registry,
+# CDN-fast). Kubelet pulls fresh at first burst boot (~30-60s) which
+# is the same wall-clock cost as a successful prebake would have been
+# but without the snapshotter footgun.
+#
+# Planned follow-up: bake Cilium binaries + eBPF programs directly
+# into the burst rootfs (no container, no snapshotter at all).
+# Tracked as a separate task — much faster than registry pull but a
+# real architectural change that needs its own design session.
+
+# Stage: extract Cilium binaries + eBPF sources from the official
+# image. This is the "binary bake" approach (task #42): instead of
+# importing the Cilium OCI archive into containerd at burst boot
+# (which hangs on Fly's fuse-overlayfs snapshotter), we copy the
+# cilium-agent binary + cilium-cni plugin + bpf/*.c sources directly
+# into the burst rootfs. Cilium runs as a host process from the
+# burst entrypoint — no container, no snapshotter, no image pull.
+# Boot drops from 5+ min to ~10s.
+#
+# Why this works: the Cilium "container" is just a deployment-time
+# wrapper. cilium-agent is a self-contained Go binary; cilium-cni is
+# a CNI plugin called by kubelet; the eBPF programs are .c files
+# compiled at runtime by clang (which we install in the base image).
+# No K8s DaemonSet, no containerd image at all.
+FROM quay.io/cilium/cilium:v1.19.4 AS cilium-extract
+
+FROM debian:bookworm-slim AS runner-prebake
+ARG RUNNER_IMAGE=docker.io/summerwind/actions-runner:latest
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ca-certificates skopeo && \
+    rm -rf /var/lib/apt/lists/*
+RUN mkdir -p /preload && \
+    skopeo copy --override-arch=amd64 --override-os=linux \
+      docker://${RUNNER_IMAGE} \
+      oci-archive:/preload/runner.tar:actions-runner:latest
+
+FROM debian:bookworm-slim
+
+# clang + llvm + libelf-dev are required for Cilium to compile its
+# eBPF programs at runtime (.c sources in /var/lib/cilium/bpf/ get
+# compiled to .o on first cilium-agent start). libcap2-bin gives us
+# `setcap` for the cilium-mount helper.
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+      ca-certificates curl iptables iproute2 conntrack socat jq \
+      fuse3 fuse-overlayfs \
+      clang llvm libelf-dev libcap2-bin && \
+    rm -rf /var/lib/apt/lists/*
+
+# Runner OCI archive (still pre-pulled — small image, doesn't hit the
+# fuse-overlayfs hang).
+COPY --from=runner-prebake /preload/runner.tar /var/lib/yscale/preload/runner.tar
+
+# Cilium binaries — copied directly from the official image as plain
+# files. No tarball, no ctr import, no snapshotter involvement.
+# Paths inside the Cilium image were verified by `docker run --rm
+# --entrypoint sh quay.io/cilium/cilium:v1.19.4 -c 'ls /usr/bin/cilium*'`.
+COPY --from=cilium-extract /usr/bin/cilium               /usr/local/bin/cilium
+COPY --from=cilium-extract /usr/bin/cilium-agent         /usr/local/bin/cilium-agent
+COPY --from=cilium-extract /usr/bin/cilium-mount         /usr/local/bin/cilium-mount
+COPY --from=cilium-extract /usr/bin/cilium-sysctlfix     /usr/local/bin/cilium-sysctlfix
+COPY --from=cilium-extract /usr/bin/cilium-dbg           /usr/local/bin/cilium-dbg
+COPY --from=cilium-extract /usr/bin/cilium-health        /usr/local/bin/cilium-health
+# CNI plugin — kubelet calls this when creating a pod's network
+# namespace. Co-located with the other CNI plugins (bridge, loopback,
+# etc) already installed from CNI_VERSION below.
+COPY --from=cilium-extract /opt/cni/bin/cilium-cni       /opt/cni/bin/cilium-cni
+# eBPF program sources — Cilium compiles .c → .o at first run via
+# clang. Headers in include/ are part of the build context.
+COPY --from=cilium-extract /var/lib/cilium/bpf/          /var/lib/cilium/bpf/
+
+# ─── BPF pre-compile (boot-speed optimization) ──────────────────────────
+#
+# Cilium-agent on a cold burst spends 90-180 s on its first BPF compile
+# pass (clang + linking + loading). We pre-compile the templates that
+# are NOT per-node-parameterized so cilium-agent has them ready before
+# it tries to compile per-node objects from scratch.
+#
+# What we precompile here:
+#   bpf_alignchecker.c, bpf_lxc.c, bpf_host.c, bpf_overlay.c,
+#   bpf_sock.c, bpf_xdp.c, bpf_network.c
+#
+# These compile against the include tree shipped by Cilium. Per-node
+# values (POD_CIDR, MAC addr, etc.) flow in via a separately-generated
+# node_config.h at runtime; cilium-agent will REGENERATE only the
+# objects whose hash inputs changed. The invariant pieces are reused.
+#
+# Honesty caveat: depending on Cilium's runtime cache-hit logic, the
+# net saving may be smaller than the "skip 90s" upper bound. We measure
+# via the `host-mode cilium ready (Xs)` line in burst boot logs. If the
+# saving is <30s after this lands we revisit (the next lever is running
+# cilium-agent itself in a builder stage against a fake apiserver and
+# baking /var/run/cilium/state/templates wholesale).
+RUN <<'PRECOMPILE'
+set -eux
+cd /var/lib/cilium/bpf
+mkdir -p /var/lib/cilium/bpf/.precompiled
+mkdir -p include/lib
+
+# Placeholder node_config.h — cilium-agent regenerates this with real
+# values at runtime, but a placeholder lets clang resolve symbols at
+# build time so the precompile pass produces .o files at all.
+cat > include/lib/node_config.h.precompile <<'NODECFG'
+#ifndef __NODE_CONFIG_H_
+#define __NODE_CONFIG_H_
+#define IPV4_GATEWAY 0
+#define IPV4_LOOPBACK 0
+#define IPV4_MASK 0
+#define ROUTER_IP {}
+#define HOST_IP {}
+#define HOST_ID 1
+#define WORLD_ID 2
+#define LXC_ID 0
+#define SECCTX_FROM_IPCACHE 1
+#define HAVE_LARGE_INSN_LIMIT 1
+#endif
+NODECFG
+
+# Per-c-file compile loop. Continue on errors so a single template
+# mismatch doesn't kill the build — we measure improvement, not
+# demand 100% precompile coverage.
+for src in bpf_alignchecker.c bpf_lxc.c bpf_host.c bpf_overlay.c \
+           bpf_sock.c bpf_xdp.c bpf_network.c; do
+  if [ -f "$src" ]; then
+    out="/var/lib/cilium/bpf/.precompiled/${src%.c}.o"
+    err="/var/lib/cilium/bpf/.precompiled/${src%.c}.err"
+    echo "[precompile] $src -> $out"
+    if clang -O2 -emit-llvm -g -target bpf -std=gnu99 -nostdinc \
+         -Wno-address-of-packed-member -Wno-unknown-warning-option \
+         -Wno-gnu-variable-sized-type-not-at-end \
+         -I/var/lib/cilium/bpf \
+         -I/var/lib/cilium/bpf/include \
+         -I/var/lib/cilium/bpf/include/bpf \
+         -isystem /usr/include/x86_64-linux-gnu \
+         -include include/lib/node_config.h.precompile \
+         -DSKIP_DEBUG -DENABLE_IPV4 -DENABLE_IPV6=0 \
+         -c "$src" -o "$out" 2>"$err"; then
+      echo "[precompile]   OK ${src%.c}.o ($(stat -c %s "$out") bytes)"
+    else
+      echo "[precompile]   skip ${src} (errored — runtime will recompile)"
+    fi
+  fi
+done
+
+echo "[precompile] summary:"
+ls -la /var/lib/cilium/bpf/.precompiled/ || true
+PRECOMPILE
+
+# Tailscale.
+ARG TAILSCALE_VERSION=1.80.3
+RUN curl -fsSL "https://pkgs.tailscale.com/stable/tailscale_${TAILSCALE_VERSION}_amd64.tgz" \
+    | tar xzf - --strip-components=1 -C /usr/local/bin \
+      "tailscale_${TAILSCALE_VERSION}_amd64/tailscale" \
+      "tailscale_${TAILSCALE_VERSION}_amd64/tailscaled"
+
+# kubelet.
+ARG KUBE_VERSION=v1.31.5
+RUN curl -fsSL "https://dl.k8s.io/release/${KUBE_VERSION}/bin/linux/amd64/kubelet" \
+    -o /usr/local/bin/kubelet && chmod +x /usr/local/bin/kubelet
+
+# CNI plugins.
+ARG CNI_VERSION=v1.6.2
+RUN mkdir -p /opt/cni/bin && \
+    curl -fsSL "https://github.com/containernetworking/plugins/releases/download/${CNI_VERSION}/cni-plugins-linux-amd64-${CNI_VERSION}.tgz" \
+    | tar xzf - -C /opt/cni/bin
+
+# containerd.
+ARG CONTAINERD_VERSION=1.7.27
+RUN curl -fsSL "https://github.com/containerd/containerd/releases/download/v${CONTAINERD_VERSION}/containerd-${CONTAINERD_VERSION}-linux-amd64.tar.gz" \
+    | tar xzf - -C /usr/local
+
+# runc.
+ARG RUNC_VERSION=v1.2.6
+RUN curl -fsSL "https://github.com/opencontainers/runc/releases/download/${RUNC_VERSION}/runc.amd64" \
+    -o /usr/local/bin/runc && chmod +x /usr/local/bin/runc
+
+# CoreDNS — runs as a host process on the burst, listening on the
+# bridge gateway IP so pod resolvers (kubelet `--cluster-dns`) reach it
+# without depending on kube-proxy/Service routing to translate the
+# customer cluster's CoreDNS Service IP (e.g. 10.43.0.10). Makes pod DNS
+# work regardless of cluster state — forwards external to 1.1.1.1, and
+# tailnet MagicDNS names (.ts.net) to 100.100.100.100 (Tailscale is up
+# before CoreDNS starts, so 100.100.100.100 is reachable from host
+# network ns).
+ARG COREDNS_VERSION=1.11.3
+RUN curl -fsSL "https://github.com/coredns/coredns/releases/download/v${COREDNS_VERSION}/coredns_${COREDNS_VERSION}_linux_amd64.tgz" \
+    | tar xzf - -C /usr/local/bin coredns && chmod +x /usr/local/bin/coredns
+
+# Stargz snapshotter — containerd remote snapshotter for lazy/streaming
+# image pulls. Containers start as soon as the manifest + a few mandatory
+# layers land; remaining bytes stream on demand via FUSE. Falls back to
+# normal eager pull for non-stargz-formatted images so unconverted images
+# keep working unchanged.
+ARG STARGZ_VERSION=0.16.3
+RUN curl -fsSL "https://github.com/containerd/stargz-snapshotter/releases/download/v${STARGZ_VERSION}/stargz-snapshotter-v${STARGZ_VERSION}-linux-amd64.tar.gz" \
+    | tar xzf - -C /usr/local/bin containerd-stargz-grpc ctr-remote
+
+# containerd-fuse-overlayfs-grpc — the proxy snapshotter daemon that
+# gives containerd a real `fuse-overlayfs` snapshotter. Required on
+# Fly Firecracker microVMs where the rootfs is already overlayfs and
+# the kernel refuses nested overlay (the stock "overlayfs" snapshotter
+# fails with "filesystem on .../work not supported as upperdir"). Without
+# this, every container init uses the "native" snapshotter (full
+# per-layer cp -a) and takes 1-2 minutes; with this, container init
+# drops to 5-10 seconds. See docs/JOINED-CNI.md.
+ARG FUSE_OVERLAYFS_VERSION=2.1.7
+RUN curl -fsSL "https://github.com/containerd/fuse-overlayfs-snapshotter/releases/download/v${FUSE_OVERLAYFS_VERSION}/containerd-fuse-overlayfs-${FUSE_OVERLAYFS_VERSION}-linux-amd64.tar.gz" \
+    | tar xzf - -C /usr/local/bin containerd-fuse-overlayfs-grpc
+
+# Persistent dirs the entrypoint expects.
+RUN mkdir -p /var/lib/tailscale /var/run/tailscale \
+    /var/lib/kubelet /var/lib/containerd \
+    /var/lib/containerd-stargz-grpc /run/containerd-stargz-grpc \
+    /etc/containerd-stargz-grpc \
+    /etc/kubernetes/manifests /etc/cni/net.d

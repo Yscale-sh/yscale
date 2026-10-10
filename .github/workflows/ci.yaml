@@ -1,0 +1,321 @@
+name: ci
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: build / vet / fmt / test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: go build
+        run: go build ./...
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: gofmt
+        run: |
+          out=$(gofmt -l .)
+          if [ -n "$out" ]; then
+            echo "The following files are not gofmt-clean:"
+            echo "$out"
+            exit 1
+          fi
+
+      - name: Install pinned promtool
+        run: |
+          set -euo pipefail
+          case "$(uname -m)" in
+            x86_64)
+              promtool_arch=amd64
+              promtool_sha256=e811827af26d822afb09a4f28314f61b618b12cff5369835a67f674d8b46f39a
+              ;;
+            aarch64|arm64)
+              promtool_arch=arm64
+              promtool_sha256=173389cc42bf09c4e6e54cb53fa07a5a835d7c261e14775d2183181d6e385d1c
+              ;;
+            *) echo "Unsupported promtool runner architecture" >&2; exit 1 ;;
+          esac
+          promtool_dir=$(mktemp -d "${RUNNER_TEMP:?}/yscale-promtool.XXXXXX")
+          promtool_archive="prometheus-3.5.0.linux-${promtool_arch}"
+          curl -fsSL --retry 3 \
+            "https://github.com/prometheus/prometheus/releases/download/v3.5.0/${promtool_archive}.tar.gz" \
+            -o "$promtool_dir/archive.tar.gz"
+          printf '%s  %s\n' "$promtool_sha256" "$promtool_dir/archive.tar.gz" | sha256sum -c -
+          tar -xzf "$promtool_dir/archive.tar.gz" -C "$promtool_dir" \
+            --strip-components=1 "$promtool_archive/promtool"
+          "$promtool_dir/promtool" --version
+          printf '%s\n' "$promtool_dir" >> "$GITHUB_PATH"
+
+      - name: go test
+        env:
+          YSCALE_REQUIRE_PROMTOOL: "1"
+        run: go test ./...
+
+  broker-redis:
+    name: broker / redis integration
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379/tcp
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: redis stream integration tests
+        env:
+          YSCALE_TEST_REDIS_URL: redis://localhost:${{ job.services.redis.ports['6379'] }}
+        run: go test -count=1 -run 'TestRedisRoundTrip|TestRedisRetentionAndStats' ./pkg/broker
+
+  lifecycle-postgres:
+    name: lifecycle / postgres integration
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: yscale_lifecycle_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432/tcp
+        options: >-
+          --health-cmd "pg_isready -U postgres -d yscale_lifecycle_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: lifecycle integration tests
+        env:
+          LIFECYCLE_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:${{ job.services.postgres.ports['5432'] }}/yscale_lifecycle_test?sslmode=disable
+          LIFECYCLE_TEST_RUNTIME_DATABASE_URL: postgres://yscale_lifecycle_runtime_test:lifecycle-runtime-test@localhost:${{ job.services.postgres.ports['5432'] }}/yscale_lifecycle_test?sslmode=disable
+          LIFECYCLE_TEST_EXPECT_DATABASE: yscale_lifecycle_test
+          LIFECYCLE_TEST_ALLOW_DESTRUCTIVE: DROP_LIFECYCLE_SCHEMA
+        run: go test -p=1 -count=1 -tags=integration -timeout=3m ./central/internal/lifecycle ./central/internal/lifecycletest
+
+      - name: state admission reservation integration tests
+        env:
+          YSCALE_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:${{ job.services.postgres.ports['5432'] }}/yscale_lifecycle_test?sslmode=disable
+        run: go test -count=1 -tags=integration -timeout=3m -run TestPostgresAdmissionReservation ./central/internal/state
+
+  billing-postgres:
+    name: billing / postgres integration
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: yscale_billing_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432/tcp
+        options: >-
+          --health-cmd "pg_isready -U postgres -d yscale_billing_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: billing integration tests
+        env:
+          BILLING_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:${{ job.services.postgres.ports['5432'] }}/yscale_billing_test?sslmode=disable
+          BILLING_TEST_EXPECT_DATABASE: yscale_billing_test
+          BILLING_TEST_ALLOW_DESTRUCTIVE: DROP_BILLING_SCHEMA
+          YSCALE_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:${{ job.services.postgres.ports['5432'] }}/yscale_billing_test?sslmode=disable
+          YSCALE_TEST_EXPECT_DATABASE: yscale_billing_test
+          YSCALE_TEST_ALLOW_DESTRUCTIVE: DELETE_BILLING_WORKLOADS
+        run: >-
+          go test -p=1 -count=1 -tags=integration -timeout=6m
+          ./central/internal/billing ./central/cmd/yscale-cloud
+
+  factory-postgres:
+    name: factory persistence / postgres integration
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: yscale_factory_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432/tcp
+        options: >-
+          --health-cmd "pg_isready -U postgres -d yscale_factory_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: factory persistence integration tests
+        env:
+          FACTORY_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:${{ job.services.postgres.ports['5432'] }}/yscale_factory_test?sslmode=disable
+          FACTORY_TEST_EXPECT_DATABASE: yscale_factory_test
+          FACTORY_TEST_ALLOW_DESTRUCTIVE: DROP_FACTORY_TABLES
+        run: go test -race -p=1 -count=3 -timeout=3m ./factory/internal/store
+
+  connector-ledger-postgres:
+    name: state / postgres integration
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: yscale
+          POSTGRES_PASSWORD: yscale
+          POSTGRES_DB: yscale_connector_ledger_test
+        ports:
+          - 5432/tcp
+        options: >-
+          --health-cmd "pg_isready -U yscale -d yscale_connector_ledger_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - name: Verify allocated PostgreSQL port
+        env:
+          PG_SERVICE_PORT: ${{ job.services.postgres.ports['5432'] }}
+        run: |
+          if [[ ! "$PG_SERVICE_PORT" =~ ^[1-9][0-9]{0,4}$ ]] || (( PG_SERVICE_PORT > 65535 )); then
+            echo "::error::PostgreSQL service port is missing or invalid; refusing host-port fallback"
+            exit 1
+          fi
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Narrowly targeted on purpose: this job runs the contracts that only a
+      # real database can prove — connector lease arbitration/restart, the
+      # issue-96 GPU-scheduled-signal observation guards, scheduling-observation
+      # ordering, and GPU telemetry's identity-scoped, update-only persistence.
+      # Other database contracts run in the dedicated steps below; the unit
+      # job has no database and skips tests that require one.
+      - name: state postgres integration tests
+        env:
+          YSCALE_TEST_DATABASE_URL: postgres://yscale:yscale@localhost:${{ job.services.postgres.ports['5432'] }}/yscale_connector_ledger_test?sslmode=disable
+        run: >-
+          go test -tags integration -count=1 -run
+          'TestConnectorCommandPostgres|TestPostgresPodObservationRequiresBurstIdentity|TestPostgresGPUObservationRejectsLegacyBurstClusterID|TestPostgresGPUTelemetry|TestPostgresBillingUsageReceipts|TestPostgresStaleWholeRowPreservesObservations|TestPostgresSchedulingObservation|TestPostgresNonexistentWorkloadNotCreated'
+          ./central/internal/state
+
+      - name: durable workload read integration tests
+        env:
+          YSCALE_SEED_DEV_CUSTOMER: "0"
+          YSCALE_TEST_DATABASE_URL: postgres://yscale:yscale@localhost:${{ job.services.postgres.ports['5432'] }}/yscale_connector_ledger_test?sslmode=disable
+        run: >-
+          go test -tags integration -count=1 -timeout=3m
+          -run TestPostgresWorkloadReads ./central/internal/handlers
+
+      - name: durable credential authentication integration tests
+        env:
+          YSCALE_SEED_DEV_CUSTOMER: "0"
+          YSCALE_TEST_DATABASE_URL: postgres://yscale:yscale@localhost:${{ job.services.postgres.ports['5432'] }}/yscale_connector_ledger_test?sslmode=disable
+        run: >-
+          go test -p=1 -tags integration -count=1 -timeout=3m
+          -run 'TestPostgresCredentialAuth|TestPostgresCredentialReadContracts'
+          ./central/internal/state ./central/internal/handlers
+
+      - name: customer write consistency integration tests
+        env:
+          YSCALE_SEED_DEV_CUSTOMER: "0"
+          YSCALE_TEST_DATABASE_URL: postgres://yscale:yscale@localhost:${{ job.services.postgres.ports['5432'] }}/yscale_connector_ledger_test?sslmode=disable
+        run: >-
+          go test -p=1 -tags integration -count=1 -timeout=3m
+          -run 'TestPostgresStaleCustomerWrites|TestPostgresCustomerWrite|TestPostgresWholeCustomerWriteCannotUndoARevoke|TestPostgresTombstoneRefusesEveryCustomerWriter'
+          ./central/internal/state
+
+      - name: connector stream credential revocation integration tests
+        env:
+          YSCALE_SEED_DEV_CUSTOMER: "0"
+          YSCALE_TEST_DATABASE_URL: postgres://yscale:yscale@localhost:${{ job.services.postgres.ports['5432'] }}/yscale_connector_ledger_test?sslmode=disable
+        run: >-
+          go test -p=1 -tags integration -count=1 -timeout=3m
+          -run TestPostgresAgentStream ./central/internal/handlers
+
+      - name: durable human authorization and workload transition integration tests
+        env:
+          YSCALE_SEED_DEV_CUSTOMER: "0"
+          YSCALE_TEST_DATABASE_URL: postgres://yscale:yscale@localhost:${{ job.services.postgres.ports['5432'] }}/yscale_connector_ledger_test?sslmode=disable
+        run: >-
+          go test -p=1 -tags integration -count=1 -timeout=3m
+          -run 'TestPostgresHumanAuthorization|TestPostgresMembershipWrites|TestPostgresAccountWrites|TestPostgresAccountReads|TestPostgresFirstWorkspace|TestPostgresWorkloadTransitions|TestPostgresBurstSnapshot|TestPostgresDeleteBooking|TestPostgresWorkloadCancellation|TestPostgresWorkloadRetry|TestPostgresWorkloadReports'
+          ./central/internal/state ./central/internal/handlers
+
+  helm:
+    name: helm lint / immutable-image contract
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+
+      - name: helm lint
+        run: |
+          helm lint deploy/helm/yscale
+          helm lint deploy/helm/yscale-agent
+
+      - name: immutable-image contract
+        run: scripts/test-immutable-images.sh

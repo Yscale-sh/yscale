@@ -1,0 +1,108 @@
+name: kube-bench-ci
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - kube-bench-v*
+    paths:
+      - kube-bench/**
+      - .github/workflows/kube-bench-ci.yml
+  pull_request:
+    paths:
+      - kube-bench/**
+      - .github/workflows/kube-bench-ci.yml
+permissions:
+  contents: read
+  packages: write
+concurrency:
+  group: kube-bench-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  test:
+    runs-on: [self-hosted, yscale-repo]
+    defaults:
+      run:
+        working-directory: kube-bench
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23.x"
+          cache: false
+      - run: go test -race ./...
+      - run: go vet ./...
+      - run: go build ./cmd/yscale-kube-bench
+    if: github.event.repository.private && vars.ENABLE_LEGACY_WORKFLOWS == 'true'
+  kind-smoke:
+    runs-on: [self-hosted, yscale-repo]
+    needs: test
+    defaults:
+      run:
+        working-directory: kube-bench
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23.x"
+          cache: false
+      - uses: azure/setup-kubectl@v4
+        with:
+          version: latest
+      - name: Install kind
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL -o /tmp/kind https://github.com/kubernetes-sigs/kind/releases/download/v0.32.0/kind-linux-amd64
+          echo "50030de23cf40a18505f20426f6a8506bedf13c6e509244bd1fa9463721b0f54  /tmp/kind" | sha256sum -c -
+          sudo install -m 0755 /tmp/kind /usr/local/bin/kind
+      - run: make build
+      - run: scripts/kind-smoke.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        continue-on-error: true
+        with:
+          name: kind-smoke-report
+          path: kube-bench/results/kind-smoke
+          if-no-files-found: ignore
+          retention-days: 7
+    if: github.event.repository.private && vars.ENABLE_LEGACY_WORKFLOWS == 'true'
+  container:
+    runs-on: [self-hosted, yscale-repo]
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - id: build-date
+        shell: bash
+        run: echo "value=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+      - id: metadata
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/yscale-kube-bench
+          tags: |
+            type=ref,event=branch
+            type=ref,event=tag
+            type=sha,prefix=sha-
+            type=raw,value=latest,enable={{is_default_branch}}
+      - uses: docker/login-action@v3
+        if: github.event_name == 'push'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: ./kube-bench
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name == 'push' }}
+          tags: ${{ steps.metadata.outputs.tags }}
+          labels: ${{ steps.metadata.outputs.labels }}
+          build-args: |
+            VERSION=${{ steps.metadata.outputs.version }}
+            COMMIT=${{ github.sha }}
+            BUILD_DATE=${{ steps.build-date.outputs.value }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+    if: github.event.repository.private && vars.ENABLE_LEGACY_WORKFLOWS == 'true'

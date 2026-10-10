@@ -1,0 +1,28 @@
+bin/
+.env
+.env.*
+!.env.*.example
+/dist/
+*.exe
+/yscaletest
+bakes/
+fast.yaml
+.claude/
+.DS_Store
+**/.DS_Store
+
+# agent paste/upload scratch — not source
+.lw-uploads/
+
+# delegate mission scratch
+.mission/
+/yscale
+.mcp.json
+/yscale-burst
+.parallel-agent-status.md
+
+# managed-cluster test harness artifacts (never commit)
+deploy/*/kubeconfig.yaml
+deploy/*-test/*.tfstate*
+deploy/*-test/*.tfplan
+deploy/*-test/burst-id.txt

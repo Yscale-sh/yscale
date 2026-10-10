@@ -1,0 +1,25 @@
+# Mesh-probe burst on Linode (real-VM backend). Pair with the Fly + AWS
+# variants for a 3-way cross-provider bandwidth matrix. Tier=full so the
+# burst pod gets a Cilium pod IP routable from the gateway over the
+# tailnet.
+apiVersion: yscale.sh/v1
+kind: Workload
+metadata:
+  name: meshprobe-linode
+spec:
+  image: docker.io/networkstatic/iperf3:latest
+  backend: linode
+  # See meshprobe-flyio for sequential-submission rationale.
+  cpu: "200m"
+  memory: "256Mi"
+  networking:
+    tier: full
+  command: ["/bin/sh", "-c"]
+  args:
+    - |
+      echo "[meshprobe-linode] starting iperf3 -s on $(hostname) at $(date -u)"
+      exec iperf3 -s -p 5201
+  retries: 0
+  budget:
+    maxUSD: 0.20
+    deadline: 20m

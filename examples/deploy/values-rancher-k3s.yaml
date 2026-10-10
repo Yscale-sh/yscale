@@ -1,0 +1,22 @@
+# Helm values overlay for yscale-agent on a Rancher-managed k3s cluster.
+
+# SaaS Agent Endpoint
+endpoint: "wss://api.yscale.sh"
+
+# Use an existing Secret containing YSCALE_TOKEN. SaaS mints the mesh key.
+existingSecret: "yscale-agent-secrets"
+
+# Map onto the k3s cloudProvider configuration
+cloudProvider: "k3s"
+
+# Namespaced RBAC is preferred as the default scope
+rbac:
+  create: true
+  scope: "namespaced"
+  allowedNamespaces:
+    - "default"
+
+# Control-plane API server endpoint as reachable from burst nodes (via Tailscale tailnet).
+# Operator must update this to match their real control-plane Tailscale MagicDNS name or IP.
+bootstrap:
+  apiserverURL: "https://rancher-k3s-api.example.invalid:6443"

@@ -1,0 +1,27 @@
+# syntax=docker/dockerfile:1.7
+
+# In-cluster BuildKit path for the customer-cluster agent. Serial compilation
+# keeps the AWS SDK dependency graph within the platform builder's memory cap.
+FROM --platform=$BUILDPLATFORM golang:1.25.0-alpine AS build
+WORKDIR /src
+ENV CGO_ENABLED=0 \
+    GOMAXPROCS=1
+
+ARG VERSION=dev
+ARG TARGETOS
+ARG TARGETARCH
+COPY go.mod go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
+
+COPY . .
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+    go build -p=1 -trimpath -ldflags="-s -w -X main.version=${VERSION}" \
+        -o /yscale-agent ./agent/cmd/yscale-agent
+
+FROM gcr.io/distroless/static-debian12:nonroot
+COPY --from=build /yscale-agent /usr/local/bin/yscale-agent
+USER nonroot:nonroot
+ENTRYPOINT ["/usr/local/bin/yscale-agent"]

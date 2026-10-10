@@ -1,0 +1,16 @@
+# Minimal runtime image for yscale-factory. Mirrors central/build/Dockerfile.cloud:
+# the binary is cross-compiled on the host and copied in (self-contained Go, no
+# cgo). ca-certificates is needed for HTTPS to the Linode API + Postgres TLS.
+#
+# Build:  CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+#           go build -o bin/yscale-factory-linux-amd64 ./factory/cmd/yscale-factory
+# then:   docker build -f factory/build/Dockerfile.factory -t <registry>/yscale-factory:latest .
+FROM alpine:3.21
+RUN apk add --no-cache ca-certificates
+COPY bin/yscale-factory-linux-amd64 /usr/local/bin/yscale-factory
+WORKDIR /app
+COPY deploy/headscale/cloud-init.sh deploy/headscale/acls.hujson ./deploy/headscale/
+# 8080 = fabric API (central-facing, bearer). 8081 = ops key handoff
+# (ops-tailnet-only; NOT exposed via a Service — reached over the ops tailnet).
+EXPOSE 8080 8081
+ENTRYPOINT ["/usr/local/bin/yscale-factory"]

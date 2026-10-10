@@ -1,0 +1,43 @@
+apiVersion: v2
+name: yscale-agent
+description: |
+  Yscale Cluster Connector. The customer-installed package that opens one
+  outbound authenticated connection to your self-hosted Yscale control plane,
+  runs alongside a WireGuard ingress sidecar that terminates
+  burst-node tunnels, and applies central-pushed Job specs in the customer's
+  cluster. Holds no cloud-provider credentials; uses constrained Kubernetes
+  permissions for burst operations.
+
+  The chart, release, and resources keep the yscale-agent name for
+  compatibility. Runs alongside an existing OSS controller without conflict —
+  they use distinct labels and service accounts.
+
+type: application
+# 0.2.0 changes where the connector's bootstrap/storage endpoint binds and
+# adds namespace-scoped Secret RBAC. Read the "Upgrading" section in
+# templates/NOTES.txt before rolling it out — an install that reaches the
+# endpoint over the pod network rather than the tailnet stops working, on
+# purpose (SECURITY-REVIEW.md H2/H3).
+# 0.2.1 adds gateway.centralServiceNamespace so a release installed outside
+# central's namespace still renders the gateway's central hostAliases pin.
+# 0.2.2 moves pod delete + eviction into the workload RBAC scope. A connector
+# pinned to one namespace drains only there; a cluster-scope connector retains
+# the existing all-namespace drain behavior.
+# 0.2.3 adds `list` on Pods in the release namespace to the artifacts Role,
+# which is where the artifact uploader's Job runs and where its completion
+# summary is read back from. Without it the export still runs, but every
+# receipt loses its object and byte counts.
+version: 0.2.4
+appVersion: "v0.0.1-preview"
+keywords:
+  - yscale
+  - kubernetes
+  - autoscaling
+  - burst
+  - gpu
+home: https://yscale.sh
+sources:
+  - https://github.com/yscale-sh/yscale
+maintainers:
+  - name: Jake Nesler
+    url: https://github.com/jakenesler

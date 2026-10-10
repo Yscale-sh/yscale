@@ -1,0 +1,120 @@
+name: images
+
+# Publishes the self-hosted stack's container images to GHCR on GitHub-hosted
+# runners: the Cluster Connector, central and the factory, each for linux/amd64
+# and linux/arm64, under ghcr.io/<repository owner>. A push to main publishes
+# sha-<short> and edge; a release tag publishes the version itself (release.yaml
+# calls this workflow and attaches the digests to the GitHub Release).
+#
+# Every image is built from source in its Dockerfile; nothing comes from a
+# maintainer machine or a private registry.
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - 'website/**'
+      - 'docs/**'
+      - '**/*.md'
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  image:
+    name: ${{ matrix.image }}
+    # Publish only from the public repository; a mirror (such as the private
+    # monorepo) must never push public images under its own owner.
+    if: github.repository == 'Yscale-sh/yscale'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: yscale-cluster-agent
+            dockerfile: agent/build/Dockerfile.agent.buildkit
+            title: Yscale Cluster Connector
+          - image: yscale-cloud
+            dockerfile: central/build/Dockerfile.cloud.buildkit
+            title: Yscale central
+          - image: yscale-factory
+            dockerfile: factory/build/Dockerfile.factory.buildkit
+            title: Yscale coordination-box factory
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # GHCR names must be lowercase and the owner is not ("Yscale-sh"). Using
+      # the owner rather than a literal keeps a fork publishing to its own
+      # namespace instead of failing against this one.
+      - name: Resolve image name
+        id: name
+        run: echo "repo=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/${{ matrix.image }}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.name.outputs.repo }}
+          flavor: latest=false
+          tags: |
+            type=ref,event=tag
+            type=sha,prefix=sha-,format=short
+            type=raw,value=edge,enable={{is_default_branch}}
+          labels: |
+            org.opencontainers.image.title=${{ matrix.title }}
+            org.opencontainers.image.licenses=LicenseRef-Yscale-Community-1.0
+            org.opencontainers.image.url=https://yscale.sh
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: VERSION=${{ github.ref_name }}
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+
+      # A tag that resolved to a single-platform image would deploy on half the
+      # clusters it is offered to. Check the pushed index, not the build's intent.
+      - name: Verify both platforms were published
+        env:
+          REF: ${{ steps.name.outputs.repo }}@${{ steps.build.outputs.digest }}
+        run: |
+          platforms=$(docker buildx imagetools inspect "$REF" --format '{{json .Manifest}}' |
+            jq -r '[.manifests[].platform | select(.os != "unknown") | "\(.os)/\(.architecture)"] | sort | join(",")')
+          echo "$REF -> $platforms"
+          [ "$platforms" = "linux/amd64,linux/arm64" ]
+
+      - name: Record digest
+        env:
+          REF: ${{ steps.name.outputs.repo }}@${{ steps.build.outputs.digest }}
+        run: |
+          echo "$REF" > "image-digest-${{ matrix.image }}.txt"
+          echo "\`$REF\`" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-digest-${{ matrix.image }}
+          path: image-digest-${{ matrix.image }}.txt
+          if-no-files-found: error
+          retention-days: 7

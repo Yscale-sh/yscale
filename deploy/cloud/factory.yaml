@@ -1,0 +1,131 @@
+# yscale-factory — the closed coordination-plane factory. Provisions/tears down
+# per-tenant Headscale boxes and is the sole custodian of their admin keys + the
+# KEK. Sibling to yscale-cloud (central) but in its OWN namespace with its own
+# ServiceAccount, Secret, and Postgres database, per docs/design/factory-service.md §5-6.
+#
+# OPERATOR PREREQUISITES (this file is a template; see deploy/runbooks/factory.md):
+#   1. Build + push the image (factory/build/Dockerfile.factory) to <registry>/yscale-factory.
+#   2. Create Secret `yscale-factory-secrets` (below lists the required keys).
+#   3. Provision a factory Postgres DATABASE (separate from central's) on the
+#      dev-datastores instance; put its DSN in the Secret.
+#   4. Stand up a separate OPS HEADSCALE and join this pod to it (ops sidecar,
+#      commented below) so boxes can reach the :8081 handoff listener privately.
+#      The ops listener is intentionally NOT fronted by a Service.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: yscale-factory
+  labels:
+    app.kubernetes.io/name: yscale-factory
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: yscale-factory
+  namespace: yscale-factory
+  labels:
+    app.kubernetes.io/name: yscale-factory
+spec:
+  replicas: 1
+  # State is durable in Postgres; a per-replica in-memory cache is the read
+  # source of truth (write-through to PG), so keep 1 replica + Recreate until
+  # PG becomes the read source of truth. Matches yscale-cloud's rationale.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: yscale-factory
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: yscale-factory
+    spec:
+      containers:
+        - name: yscale-factory
+          image: ghcr.io/yscale-sh/yscale-factory:v0.0.1-preview
+          imagePullPolicy: Always
+          ports:
+            - { name: fabric, containerPort: 8080, protocol: TCP } # central-facing (bearer)
+            - { name: ops, containerPort: 8081, protocol: TCP }    # ops-tailnet-only handoff
+          envFrom:
+            - secretRef:
+                name: yscale-factory-secrets # FACTORY_BEARER_TOKEN, FACTORY_KEK,
+                # DATABASE_URL, LINODE_TOKEN (box-scoped), FACTORY_OPS_AUTHKEY, FACTORY_OPS_URL
+                # FACTORY_OPS_LOGIN_SERVER (HTTPS origin of your ops Headscale)
+          # NOT FACTORY_DEV — production runs the durable store + Linode worker.
+          resources:
+            requests: { cpu: 50m, memory: 96Mi }
+            limits:   { memory: 192Mi }
+          # No /healthz endpoint on the fabric handler → TCP probes on :8080.
+          readinessProbe:
+            tcpSocket: { port: 8080 }
+            periodSeconds: 10
+            failureThreshold: 6
+            initialDelaySeconds: 5
+          livenessProbe:
+            tcpSocket: { port: 8080 }
+            periodSeconds: 30
+            failureThreshold: 6
+        # --- OPS TAILNET SIDECAR (operator-provided) -------------------------
+        # The box hands its admin key to :8081 over the private ops tailnet. Add
+        # a Tailscale client sidecar here with an explicit --login-server pointing
+        # to FACTORY_OPS_LOGIN_SERVER. It joins the OPS Headscale and routes
+        # its traffic to the factory pod, so :8081 is reachable ONLY over that
+        # mesh — never from central, bursts, or a customer tailnet. Left as a stub
+        # because the ops-tailnet choice + auth is operator infra.
+        # - name: ops-tailnet
+        #   image: <tailscale/headscale ops client>
+        #   env: [ ... ops auth key from the Secret ... ]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: yscale-factory
+  namespace: yscale-factory
+  labels:
+    app.kubernetes.io/name: yscale-factory
+spec:
+  # ClusterIP only — no Ingress/LoadBalancer/NodePort. Exposes ONLY the fabric
+  # API (:8080). The ops handoff (:8081) is deliberately absent: it is reached
+  # over the ops tailnet, not the cluster network.
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: yscale-factory
+  ports:
+    - { name: fabric, port: 8080, targetPort: 8080, protocol: TCP }
+---
+# NetworkPolicy: the factory is the crown jewel (every box key + the KEK), so
+# lock its cluster-network surface down. Ops-tailnet traffic rides the sidecar's
+# own interface and is not governed by this policy.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: yscale-factory
+  namespace: yscale-factory
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: yscale-factory
+  policyTypes: [Ingress, Egress]
+  ingress:
+    # Fabric API reachable ONLY from central's namespace, only on :8080.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: yscale
+      ports:
+        - { protocol: TCP, port: 8080 }
+  egress:
+    # DNS.
+    - ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    # Linode API + tenant box control planes (HTTPS) + Let's Encrypt HTTP-01 on
+    # the boxes. NetworkPolicy can't match a DNS host, so this is port-scoped;
+    # the box-scoped LINODE_TOKEN + tag-verified teardown bound what it can touch.
+    - ports:
+        - { protocol: TCP, port: 443 }
+        - { protocol: TCP, port: 80 }
+    # Postgres (factory database on the dev-datastores instance).
+    - ports:
+        - { protocol: TCP, port: 5432 }

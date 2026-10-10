@@ -1,0 +1,24 @@
+# Linode GPU smoke — nvidia-smi on RTX 4000 Ada.
+# Cold-boot is ~5-10 min (StackScript installs are slow on Linode);
+# baked-image GPU instances are faster but still tens of seconds.
+# Cost: g2-gpu-rtx4000a1-s ~ $0.52/hr → <$0.10 per run if reap works.
+apiVersion: yscale.sh/v1
+kind: Workload
+metadata:
+  name: linode-gpu-tiny
+spec:
+  image: nvcr.io/nvidia/cuda:12.4.0-base-ubuntu22.04
+  backend: linode
+  size: small
+  # Keep the successful container alive briefly so the API-server-to-kubelet
+  # log route can settle and yscaletest can retain the NVIDIA-SMI output before
+  # the provider's fast terminal teardown removes the node.
+  command: ["/bin/sh", "-c", "nvidia-smi && sleep 30"]
+  gpu:
+    kind: rtx4000ada
+    count: 1
+    reliability: reliable
+  retries: 0
+  budget:
+    maxUSD: 0.20
+    deadline: 20m

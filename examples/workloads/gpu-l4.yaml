@@ -1,0 +1,33 @@
+# Run-once GPU workload on an NVIDIA L4.
+#
+# Provisions a burst node with 1x L4, runs nvidia-smi to verify GPU
+# access, then exits. The simplest GPU smoke test.
+#
+# Use:
+#   yscale apply --dry-run -f examples/workloads/gpu-l4.yaml
+#   yscale apply -f examples/workloads/gpu-l4.yaml
+#
+# Watch with:
+#   kubectl -n default get workloads -w
+#   kubectl -n default get jobs,pods -l yscale.sh/workload=gpu-l4-smoke -w
+apiVersion: yscale.sh/v1
+kind: Workload
+metadata:
+  name: gpu-l4-smoke
+  namespace: default
+spec:
+  image: nvcr.io/nvidia/cuda:12.4.1-base-ubuntu22.04
+  gpu:
+    kind: l4
+    count: 1
+  size: small
+  command: ["/bin/sh", "-c"]
+  args:
+    - |
+      echo "[gpu-l4] running on $(hostname) at $(date -u)"
+      nvidia-smi
+      echo "[gpu-l4] done"
+  retries: 0
+  budget:
+    maxUSD: 1.00
+    deadline: 15m
