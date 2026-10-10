@@ -14,7 +14,7 @@ The following table describes the control and execution planes, followed by the 
 
 | Component | Where it runs | Responsibility |
 |---|---|---|
-| **Yscale Control Plane** | Your operator-owned central endpoint | Tenant management, provider orchestration, placement and lifecycle tracking. Holds the cloud-provider credentials. Optional billing code is included; Yscale does not operate this service. |
+| **Yscale Control Plane** | Your operator-owned central endpoint | Tenant management, provider orchestration, placement and lifecycle tracking. Holds the cloud-provider credentials. Yscale does not operate this service. |
 | **Yscale Cluster Connector** | Your cluster (one Helm release) | The customer-installed package and its outbound control channel to the control plane. |
 | ↳ Workload Controller | Your cluster | Reconciles `Workload` resources and creates the Jobs that run on burst nodes. |
 | ↳ Node Enrollment Service | Your cluster | Mints short-lived kubelet bootstrap tokens and approves the narrowly scoped CSRs for burst nodes only. |

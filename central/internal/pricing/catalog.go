@@ -100,8 +100,8 @@ var awsInstanceRates = map[string]float64{
 // APPROXIMATE: hand-entered from the public on-demand price list (2026-06)
 // and NOT yet machine-verified against the AWS Pricing API the way the CPU
 // rates above are — GPU SKUs were unpriced while the backend was CPU-only.
-// Re-verify with scripts/refresh-prices.sh before these drive customer
-// billing. They are estimates only and MUST NOT enforce customer hard caps;
+// Re-verify with scripts/refresh-prices.sh before relying on them. They are
+// estimates only and MUST NOT enforce customer hard caps;
 // hard-cap admission also requires authoritative pricing for the launch region.
 var awsGPUInstanceRates = map[string]float64{
 	// g4dn — NVIDIA T4

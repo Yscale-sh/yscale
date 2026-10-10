@@ -304,8 +304,8 @@ func TestPendingGatesAreListedExactly(t *testing.T) {
 			t.Fatalf("pending gate %s missing from failures: %v", id, report.Failures)
 		}
 	}
-	if len(report.ProvenGates) != 11 {
-		t.Fatalf("proven gates = %d, want 11", len(report.ProvenGates))
+	if len(report.ProvenGates) != 10 {
+		t.Fatalf("proven gates = %d, want 10", len(report.ProvenGates))
 	}
 }
 

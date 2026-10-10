@@ -11,8 +11,8 @@ full-source project, not a hosted-service launch or a limited-feature edition.
 Yscale is distributed as self-hosted software; we do not offer a managed
 Yscale hosting service. Paid resale/hosting licenses authorize other operators
 to provide their own offerings, not access to a service operated by us.
-The control plane, cluster connector, provider adapters, fabric factory,
-tenant-management and billing implementations are included in this repository.
+The control plane, cluster connector, provider adapters, fabric factory and
+tenant-management implementations are included in this repository.
 
 **The default release is the full managed-mesh version, including self-hosted
 installs.** You run central and the factory, which manages your tenants'
@@ -74,7 +74,7 @@ commands and manifest injection. Running it without a subcommand starts the
 legacy controller; use `help` when exploring without provisioning anything.
 
 The default build and tagged release archives include central, agent, factory,
-CLI and lifecycle/billing migration tools. No enterprise tag or export step
+CLI and the lifecycle migration tool. No enterprise tag or export step
 is needed. `make run` starts central; configure its environment first.
 To build individual services during development:
 

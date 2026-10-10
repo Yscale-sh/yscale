@@ -30,11 +30,6 @@ func preservePendingBurst(incoming, stored *Burst, workload *Workload) error {
 		// cannot change what will be settled or which ancillary resources it owns.
 		if stored.BackendID != "" {
 			incoming.CreatedAt, incoming.HourlyUSD = stored.CreatedAt, stored.HourlyUSD
-			manual := incoming.Billing != nil && stored.Billing != nil && incoming.Billing.HoldID == stored.Billing.HoldID && incoming.Billing.WorkloadRef == stored.Billing.WorkloadRef && incoming.Billing.ManualAttention
-			incoming.Billing = cloneReadPointer(stored.Billing)
-			if manual {
-				incoming.Billing.ManualAttention = true
-			}
 			if stored.TerminalCost != nil {
 				incoming.TerminalCost = cloneReadPointer(stored.TerminalCost)
 			}

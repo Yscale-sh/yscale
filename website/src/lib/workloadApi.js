@@ -44,28 +44,9 @@ const MESSAGES = {
 // everything useful in `message`. Bounded and whitespace-collapsed so an
 // upstream cannot paste an essay into the submit form.
 const MAX_MESSAGE = 240;
-const BILLING_KEYS = new Set(["hold_id", "state", "reserved_micro_usd", "captured_micro_usd", "currency", "quote_id", "pricing_version"]);
-const BILLING_STATES = new Set(["pending", "captured", "released", "expired"]);
-
-export function normalizeWorkloadBilling(value) {
-  if (value === undefined) return undefined;
-  if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).length !== BILLING_KEYS.size || Object.keys(value).some((key) => !BILLING_KEYS.has(key))) {
-    throw new ApiError(502, "The workload service returned an invalid billing receipt.");
-  }
-  const clean = (item) => typeof item === "string" && item === item.trim() && item.length > 0 && item.length <= 128 ? item : "";
-  if (!Number.isSafeInteger(value.hold_id) || value.hold_id <= 0 || !BILLING_STATES.has(value.state) || !Number.isSafeInteger(value.reserved_micro_usd) || value.reserved_micro_usd < 0
-      || !Number.isSafeInteger(value.captured_micro_usd) || value.captured_micro_usd < 0 || value.currency !== "USD" || !clean(value.quote_id) || !Number.isSafeInteger(value.pricing_version) || value.pricing_version <= 0) {
-    throw new ApiError(502, "The workload service returned an invalid billing receipt.");
-  }
-  return { holdId: value.hold_id, state: value.state, reservedMicroUsd: value.reserved_micro_usd, capturedMicroUsd: value.captured_micro_usd, currency: "USD", quoteId: value.quote_id, pricingVersion: value.pricing_version };
-}
-
-function withBilling(workload) {
+function normalizeWorkload(workload) {
   if (!workload || typeof workload !== "object" || Array.isArray(workload)) throw new ApiError(502, "The workload service returned an invalid record.");
-  const billing = normalizeWorkloadBilling(workload.billing);
-  const result = { ...workload };
-  if (billing) result.billing = billing;
-  return result;
+  return { ...workload };
 }
 
 function safeMessage(value) {
@@ -78,7 +59,7 @@ async function call(path, { token, method = "GET", body, signal, idempotencyKey,
   const headers = { Authorization: `Bearer ${token}`, Accept: "application/json" };
   if (body !== undefined) headers["Content-Type"] = "text/yaml";
   // The caller owns the key for the whole logical submission; this layer only
-  // carries it, so a retried fetch never invents a second paid run.
+  // carries it, so a retried fetch never invents a second run.
   if (idempotencyKey) headers[IDEMPOTENCY_HEADER] = idempotencyKey;
   // The target cluster is routing, not workload spec: it rides as a header the
   // seam validates and forwards, and never appears in the YAML central stores.
@@ -141,7 +122,7 @@ export function fetchWorkloads({ token, tenantId, signal }) {
   const result = isDevPreviewToken(token) ? Promise.resolve(previewWorkloads(tenantId)) : call(base(tenantId), { token, signal });
   return result.then((payload) => {
     if (!payload || typeof payload !== "object" || !Array.isArray(payload.workloads)) throw new ApiError(502, "The workload service returned an invalid list.");
-    return { ...payload, workloads: payload.workloads.map(withBilling) };
+    return { ...payload, workloads: payload.workloads.map(normalizeWorkload) };
   });
 }
 
@@ -162,10 +143,10 @@ export function fetchWorkload({ token, tenantId, workloadId, signal }) {
   if (isDevPreviewToken(token)) {
     const workload = previewWorkload(tenantId, workloadId);
     return workload
-      ? Promise.resolve(withBilling(workload))
+      ? Promise.resolve(normalizeWorkload(workload))
       : Promise.reject(new ApiError(404, MESSAGES[404]));
   }
-  return call(`${base(tenantId)}/${encodeURIComponent(workloadId)}`, { token, signal }).then(withBilling);
+  return call(`${base(tenantId)}/${encodeURIComponent(workloadId)}`, { token, signal }).then(normalizeWorkload);
 }
 
 export function fetchWorkloadLogs({ token, tenantId, workloadId, tail = 200, signal }) {

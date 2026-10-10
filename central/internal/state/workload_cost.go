@@ -12,7 +12,7 @@ import (
 // consumer reading an old record can tell which rule produced it. Changing how
 // the number is derived means a new basis, never a redefinition of this one.
 //
-// What it is not: billing. Nothing here consults a price list, a plan, a
+// What it is not: an invoice. Nothing here consults a price list, a plan, a
 // discount or a ledger — it is the upstream rate central was quoted when the
 // node was booked, held against how long the node existed.
 const WorkloadCostBasisRateRuntime = "hourly_rate_x_runtime_to_reap_claim"

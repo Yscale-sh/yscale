@@ -37,7 +37,7 @@ var runtimeRolePattern = regexp.MustCompile(`^[a-z_][a-z0-9_]{0,62}$`)
 // worker that could create its own schema could also create a divergent one,
 // and the authoritative delete machine is only authoritative if exactly one
 // migration produced it. Schema installation is the out-of-band privileged job
-// (EnsureProviderDeleteSchema), exactly as billing.OpenStore splits it.
+// (EnsureProviderDeleteSchema).
 func OpenStore(ctx context.Context, dsn string) (*Store, error) {
 	pool, err := pgxpool.New(ctx, dsn)
 	if err != nil {

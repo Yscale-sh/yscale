@@ -13,13 +13,10 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/yscale-sh/yscale/central/internal/billing"
-	"github.com/yscale-sh/yscale/central/internal/cost"
 	"github.com/yscale-sh/yscale/central/internal/credentialcipher"
 	"github.com/yscale-sh/yscale/central/internal/decider"
 	"github.com/yscale-sh/yscale/central/internal/factoryclient"
@@ -34,28 +31,12 @@ import (
 var _ mesh.Provider = (*client.Headscale)(nil)
 
 var (
-	enterpriseFactory         factoryclient.FabricService
-	enterprisePoller          *fabricPoller
-	enterpriseCheckoutGateway billing.CheckoutGateway
-	enterpriseCashProvider    billing.ExternalCashProvider
+	enterpriseFactory factoryclient.FabricService
+	enterprisePoller  *fabricPoller
 )
 
 func init() {
 	validateMeshConfig = validateManagedMeshConfig
-	startBillingWorkers = func(ctx context.Context, store *billing.Store, workloadStore *state.Store, gate *handlers.PaidGate, meter *cost.Meter, log *slog.Logger) {
-		if store == nil {
-			return
-		}
-		if enterpriseCheckoutGateway != nil {
-			processor := &billing.WebhookProcessor{Store: store, Resolver: enterpriseCheckoutGateway, Log: log}
-			go processor.Run(ctx)
-		}
-		var usageSource billing.UsageReceiptSource
-		if workloadStore != nil {
-			usageSource = durableUsageReceiptSource{store: workloadStore}
-		}
-		startBillingReconciliation(ctx, store, gate, meter, log, enterpriseCashProvider, usageSource)
-	}
 	// Per-customer Headscale policy reconciler: builds the tagOwner/route-approver
 	// policy from each customer's stored, validated gateway routes and PUTs it to
 	// their box, serialized per customer and off the WS read goroutine. Workers
@@ -286,34 +267,16 @@ func init() {
 	// behavior. This is a separate hook from registerAdminRoutes because it is a
 	// separate credential: /v1/account authenticates a human, /v1/admin/tenants
 	// an operator, and neither is a cluster token.
-	registerAccountRoutes = func(mux *http.ServeMux, store *state.Store, wls *handlers.Workloads, rec handlers.PolicyReconciler, log *slog.Logger, billingStores ...*billing.Store) {
-		var billingStore *billing.Store
-		if len(billingStores) > 0 {
-			billingStore = billingStores[0]
-		}
-		checkoutGateway, checkoutMin, checkoutMax, checkoutErr := stripeCheckoutFromEnv(billingStore)
-		if checkoutErr != nil {
-			panic(fmt.Sprintf("invalid Stripe checkout configuration: %v", checkoutErr))
-		}
-		cashProvider, cashErr := stripeCashProviderFromEnv(billingStore, checkoutGateway)
-		if cashErr != nil {
-			panic(fmt.Sprintf("invalid Stripe reconciliation configuration: %v", cashErr))
-		}
-		enterpriseCheckoutGateway = checkoutGateway
-		enterpriseCashProvider = cashProvider
+	registerAccountRoutes = func(mux *http.ServeMux, store *state.Store, wls *handlers.Workloads, rec handlers.PolicyReconciler, log *slog.Logger) {
 		credentialCipher, cipherErr := credentialcipher.New(os.Getenv("YSCALE_CREDENTIAL_MASTER_KEY"))
 		if cipherErr != nil && store.HasCloudAccounts() {
 			panic("durable cloud accounts require a valid YSCALE_CREDENTIAL_MASTER_KEY")
 		}
 		accounts := &handlers.Accounts{
-			Store:               store,
-			Billing:             billingStore,
-			Checkout:            checkoutGateway,
-			CheckoutMinMicroUSD: checkoutMin,
-			CheckoutMaxMicroUSD: checkoutMax,
-			Issuer:              os.Getenv("YSCALE_ID_ISSUER"),
-			Log:                 log,
-			Workloads:           wls,
+			Store:     store,
+			Issuer:    os.Getenv("YSCALE_ID_ISSUER"),
+			Log:       log,
+			Workloads: wls,
 			// The cluster DELETE below withdraws that cluster's route intent;
 			// this is what converges the coordination server to it.
 			Reconciler: rec,
@@ -421,17 +384,6 @@ func init() {
 		// so it appears and disappears with them rather than on a switch of its
 		// own.
 		mux.Handle("GET /v1/tenants/{tenant_id}/audit", http.HandlerFunc(accounts.HandleListAudit))
-		if billingStore != nil {
-			mux.Handle("GET /v1/tenants/{tenant_id}/billing", http.HandlerFunc(accounts.HandleGetTenantBilling))
-			mux.Handle("GET /v1/tenants/{tenant_id}/billing/statement", http.HandlerFunc(accounts.HandleGetTenantBillingStatement))
-			mux.Handle("GET /v1/tenants/{tenant_id}/billing/statement.csv", http.HandlerFunc(accounts.HandleGetTenantBillingStatementCSV))
-		}
-		if checkoutGateway != nil {
-			mux.Handle("POST /v1/tenants/{tenant_id}/billing/checkouts", http.HandlerFunc(accounts.HandleCreateTenantCheckout))
-			mux.Handle("GET /v1/tenants/{tenant_id}/billing/checkouts/{id}", http.HandlerFunc(accounts.HandleGetTenantCheckout))
-			webhooks := &handlers.BillingWebhooks{Store: billingStore, Gateway: checkoutGateway, Log: log}
-			mux.Handle("POST /v1/billing/webhooks/stripe", http.HandlerFunc(webhooks.HandleStripe))
-		}
 
 		// The browser-operator console for hosted capacity: a human's ordinary
 		// Yscale ID access token plus an exact-subject allowlist — a THIRD
@@ -459,10 +411,6 @@ func init() {
 			operatorAuth.Wrap(http.HandlerFunc(hosted.HandleListOperatorTenants)))
 		mux.Handle("PATCH /v1/operator/tenants/{tenant_id}/limits",
 			operatorAuth.Wrap(http.HandlerFunc(hosted.HandlePatchTenantLimits)))
-		if billingStore != nil {
-			mux.Handle("POST /v1/operator/tenants/{tenant_id}/billing/service-credits",
-				operatorAuth.Wrap(http.HandlerFunc(accounts.HandleGrantServiceCredit)))
-		}
 		mux.Handle("GET /v1/operator/hosted-capacity/requests",
 			operatorAuth.Wrap(http.HandlerFunc(hosted.HandleListHostedCapacityRequests)))
 		// The standing inventory beside the queue: what the shared cluster is
@@ -494,103 +442,6 @@ func init() {
 		mux.Handle("POST /v1/operator/tenants/{tenant_id}/connector-commands/{id}/requeue",
 			operatorAuth.Wrap(http.HandlerFunc(hosted.HandleRequeueTenantConnectorCommand)))
 	}
-}
-
-const (
-	defaultStripeCheckoutMinMicroUSD int64 = 5_000_000
-	defaultStripeCheckoutMaxMicroUSD int64 = 10_000_000_000
-)
-
-// stripeCheckoutFromEnv is a second activation boundary inside test-mode paid
-// runtime. Existing billing credentials or a migrated store do not make a
-// purchase route appear; the operator must explicitly enable the complete
-// Stripe configuration. Livemode remains intentionally unavailable in this
-// slice until the test-mode economic lifecycle is proven end to end.
-func stripeCheckoutFromEnv(store *billing.Store) (*billing.StripeGateway, int64, int64, error) {
-	enabledRaw := os.Getenv("BILLING_CHECKOUT_ENABLED")
-	if enabledRaw == "" || enabledRaw == "false" {
-		return nil, 0, 0, nil
-	}
-	if enabledRaw != "true" {
-		return nil, 0, 0, fmt.Errorf("BILLING_CHECKOUT_ENABLED must be true or false")
-	}
-	if store == nil {
-		return nil, 0, 0, fmt.Errorf("BILLING_CHECKOUT_ENABLED=true requires BILLING_DATABASE_URL")
-	}
-	if store.LiveMode() {
-		return nil, 0, 0, fmt.Errorf("Stripe checkout livemode is not activated")
-	}
-	verifyCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := store.AssertCheckoutSchema(verifyCtx); err != nil {
-		return nil, 0, 0, fmt.Errorf("checkout schema is unavailable: %w", err)
-	}
-	return stripeCheckoutConfigFromEnv(false)
-}
-
-func stripeCheckoutConfigFromEnv(liveMode bool) (*billing.StripeGateway, int64, int64, error) {
-	if liveMode {
-		return nil, 0, 0, fmt.Errorf("Stripe checkout livemode is not activated")
-	}
-	minimum, err := checkoutAmountFromEnv("BILLING_CHECKOUT_MIN_MICRO_USD", defaultStripeCheckoutMinMicroUSD)
-	if err != nil {
-		return nil, 0, 0, err
-	}
-	maximum, err := checkoutAmountFromEnv("BILLING_CHECKOUT_MAX_MICRO_USD", defaultStripeCheckoutMaxMicroUSD)
-	if err != nil {
-		return nil, 0, 0, err
-	}
-	gateway, err := billing.NewStripeGateway(billing.StripeConfig{
-		SecretKey: os.Getenv("STRIPE_SECRET_KEY"), WebhookSecret: os.Getenv("STRIPE_WEBHOOK_SECRET"),
-		AccountID: os.Getenv("STRIPE_ACCOUNT_ID"), SuccessURL: os.Getenv("BILLING_CHECKOUT_SUCCESS_URL"),
-		CancelURL: os.Getenv("BILLING_CHECKOUT_CANCEL_URL"), LiveMode: liveMode,
-		MinMicroUSD: minimum, MaxMicroUSD: maximum,
-	})
-	if err != nil {
-		return nil, 0, 0, err
-	}
-	return gateway, minimum, maximum, nil
-}
-
-// stripeCashProviderFromEnv keeps external-cash reconciliation independent of
-// checkout activation. A configured checkout gateway already has the same
-// read-only inventory capability; otherwise the explicit reconciliation flag
-// constructs a cash-only provider that cannot create sessions or accept
-// webhooks.
-func stripeCashProviderFromEnv(store *billing.Store, checkout *billing.StripeGateway) (billing.ExternalCashProvider, error) {
-	if checkout != nil {
-		return checkout, nil
-	}
-	switch os.Getenv("BILLING_STRIPE_RECONCILIATION_ENABLED") {
-	case "", "false":
-		return nil, nil
-	case "true":
-	default:
-		return nil, fmt.Errorf("BILLING_STRIPE_RECONCILIATION_ENABLED must be true or false")
-	}
-	if store == nil {
-		return nil, fmt.Errorf("BILLING_STRIPE_RECONCILIATION_ENABLED=true requires BILLING_DATABASE_URL")
-	}
-	if store.LiveMode() {
-		return nil, fmt.Errorf("Stripe cash reconciliation livemode is not activated")
-	}
-	return billing.NewStripeCashProvider(billing.StripeCashConfig{
-		SecretKey: os.Getenv("STRIPE_RECONCILIATION_SECRET_KEY"),
-		AccountID: os.Getenv("STRIPE_RECONCILIATION_ACCOUNT_ID"),
-		LiveMode:  false,
-	})
-}
-
-func checkoutAmountFromEnv(key string, fallback int64) (int64, error) {
-	raw := os.Getenv(key)
-	if raw == "" {
-		return fallback, nil
-	}
-	amount, err := strconv.ParseInt(raw, 10, 64)
-	if err != nil || amount <= 0 || amount%10_000 != 0 {
-		return 0, fmt.Errorf("%s must be a positive whole-cent micro-USD amount", key)
-	}
-	return amount, nil
 }
 
 // fabricPoller tracks fabrics started through the tenant lifecycle so the

@@ -55,17 +55,15 @@ func TestMigrationConfigRejectsRoleInjection(t *testing.T) {
 	}
 }
 
-// Both migrators and the runtime entrypoint ship in one image: the Jobs that
-// gate a rollout must run the same build as the Deployment they gate.
-func TestCloudBuildkitImagePackagesBothMigratorsAndKeepsRuntimeEntrypoint(t *testing.T) {
+// The migrator and the runtime entrypoint ship in one image: the Job that
+// gates a rollout must run the same build as the Deployment it gates.
+func TestCloudBuildkitImagePackagesTheMigratorAndKeepsRuntimeEntrypoint(t *testing.T) {
 	raw, err := os.ReadFile("../../build/Dockerfile.cloud.buildkit")
 	if err != nil {
 		t.Fatal(err)
 	}
 	text := string(raw)
 	for _, required := range []string{
-		"./central/cmd/yscale-billing-migrate",
-		"COPY --from=build /yscale-billing-migrate /usr/local/bin/yscale-billing-migrate",
 		"./central/cmd/yscale-lifecycle-migrate",
 		"COPY --from=build /yscale-lifecycle-migrate /usr/local/bin/yscale-lifecycle-migrate",
 		`ENTRYPOINT ["/usr/local/bin/yscale-cloud"]`,

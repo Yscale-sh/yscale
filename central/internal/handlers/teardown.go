@@ -77,7 +77,6 @@ type TeardownWorker struct {
 	Reaper       Reaper
 	Store        *state.Store
 	CostRecorder workloadCostRecorder
-	Billing      BurstBilling
 	Log          *slog.Logger
 	Consumer     string // unique per worker instance (e.g. the central pod name)
 	// Commands is the durable connector-command ledger the node drain is written
@@ -191,13 +190,6 @@ func (w *TeardownWorker) process(ctx context.Context, msg *broker.Message) {
 			"burst", b.ID, "customer", b.CustomerID, "attempt", msg.Deliveries,
 			"recorded", recorded, "error", err)
 		return
-	}
-	if b.Billing != nil {
-		if err := settleBurstBilling(ctx, w.Billing, &b, job.Cost); err != nil {
-			w.Log.Warn("teardown complete but prepaid settlement failed; job will retry",
-				"burst", b.ID, "customer", b.CustomerID, "attempt", msg.Deliveries, "error", err)
-			return
-		}
 	}
 
 	// With a ledger this returns once the drain is DURABLE, not once a connector

@@ -350,8 +350,9 @@ func (d *Decider) admitProviderCreate(ctx context.Context, wl *workload.Workload
 		// live attempt, or owned by an attempt that died holding the lease. Every
 		// one of those is a reason NOT to buy a second machine — and where one may
 		// already exist, the refusal is an AMBIGUOUS create rather than a clean
-		// failure, so the caller retains the credit hold and routes it to manual
-		// attention instead of quietly refunding a machine that is billing.
+		// failure, so the caller retains the admission reservation and routes it
+		// to manual attention instead of quietly forgetting a machine that is
+		// billing.
 		refusal := &ProviderCreateNotClaimableError{
 			WorkloadID: resp.WorkloadID, BurstID: resp.BurstID,
 			State: op.State, LeaseExpired: op.LeaseExpired,
@@ -428,8 +429,8 @@ func decodeAdmittedRequest(op lifecycle.ProviderCreateOperation) (providerCreate
 // succeedProviderCreate commits the provider resource ID under the attempt's
 // lease. A failure here means a machine exists that authoritative state does
 // not record, so it is reported as an AMBIGUOUS create: the caller retains the
-// billing hold, flags manual attention, and the orphan sweep is the backstop
-// that eventually reclaims the node.
+// admission reservation, flags manual attention, and the orphan sweep is the
+// backstop that eventually reclaims the node.
 func (d *Decider) succeedProviderCreate(ctx context.Context, adm *admittedProviderCreate, backendID string) error {
 	if adm == nil || !adm.admitted {
 		return nil
@@ -454,13 +455,13 @@ func (d *Decider) succeedProviderCreate(ctx context.Context, adm *admittedProvid
 // and an expired create lease is ambiguous by construction — nothing durable
 // records how far the attempt got before it stopped writing. Reporting the
 // caller's clean "the provider refused" upwards while that row survives is the
-// one answer this path must never give: it releases the tenant's credit hold for
-// a burst whose create may in fact have landed.
+// one answer this path must never give: it releases the tenant's admission
+// reservation for a burst whose create may in fact have landed.
 //
 // nil means the failure is recorded and the caller's own error is the whole
 // truth. A non-nil return is an AMBIGUOUS provider-create error that REPLACES
-// it, so the caller retains the hold and routes the submission to manual
-// attention.
+// it, so the caller retains the reservation and routes the submission to
+// manual attention.
 func (d *Decider) failProviderCreate(ctx context.Context, adm *admittedProviderCreate, cause error) error {
 	if adm == nil || !adm.admitted || cause == nil {
 		return nil

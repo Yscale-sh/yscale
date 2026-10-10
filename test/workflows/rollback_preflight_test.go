@@ -37,7 +37,6 @@ case "$*" in
     esac ;;
   *spec.replicas*) echo 1 ;;
   *strategy.type*) echo Recreate ;;
-  *'.env[*]'*) printf '%s\n' BILLING_LIVE_MODE=false PAID_RUNTIME_LIVE_MODE=false PAID_RUNTIME_ENABLED=true ;;
   *) exit 74 ;;
 esac
 `

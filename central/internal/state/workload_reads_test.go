@@ -21,13 +21,12 @@ func TestWorkloadSnapshotsMemory(t *testing.T) {
 		bursts: map[string]*Burst{
 			"foreign": {ID: "foreign", CustomerID: "other"},
 			"own": {ID: "own", CustomerID: "tenant", HourlyUSD: math.NaN(),
-				Billing: &WorkloadBilling{HoldID: 1}, TerminalCost: &WorkloadCost{EstimatedUSD: 2},
+				TerminalCost:    &WorkloadCost{EstimatedUSD: 2},
 				LastHeartbeatAt: &now, NodePhaseAt: &now, OccupancyObservedAt: &now},
 		},
 	}
 	w := s.workloads["a"]
 	w.StartedAt, w.FinishedAt = &now, &now
-	w.Billing = &WorkloadBilling{HoldID: 3}
 	w.PodObservation = &PodObservation{PodName: "pod"}
 	w.GPUObservation = &GPUObservation{AllocatableAt: now}
 	w.SchedulingObservation = &SchedulingObservation{State: "Scheduled"}
@@ -44,20 +43,18 @@ func TestWorkloadSnapshotsMemory(t *testing.T) {
 	rows[0].Workload.SpecYAML[0] = 'X'
 	*rows[0].Workload.StartedAt = time.Time{}
 	*rows[0].Workload.FinishedAt = time.Time{}
-	rows[0].Workload.Billing.HoldID = 99
 	rows[0].Workload.PodObservation.PodName = "changed"
 	rows[0].Workload.GPUObservation.AllocatableAt = time.Time{}
 	rows[0].Workload.SchedulingObservation.State = "Waiting"
-	rows[0].Burst.Billing.HoldID = 99
 	rows[0].Burst.TerminalCost.EstimatedUSD = 99
 	*rows[0].Burst.LastHeartbeatAt = time.Time{}
 	*rows[0].Burst.NodePhaseAt = time.Time{}
 	*rows[0].Burst.OccupancyObservedAt = time.Time{}
-	if string(s.workloads["a"].SpecYAML) != "spec" || s.bursts["own"].Billing.HoldID != 1 || s.bursts["own"].TerminalCost.EstimatedUSD != 2 || now.IsZero() {
+	if string(s.workloads["a"].SpecYAML) != "spec" || s.bursts["own"].TerminalCost.EstimatedUSD != 2 || now.IsZero() {
 		t.Fatal("snapshot aliases stored spec or burst pointer fields")
 	}
-	if w.Billing.HoldID != 3 || w.PodObservation.PodName != "pod" || w.GPUObservation.AllocatableAt.IsZero() || w.SchedulingObservation.State != "Scheduled" {
-		t.Fatal("snapshot aliases workload billing or observation fields")
+	if w.PodObservation.PodName != "pod" || w.GPUObservation.AllocatableAt.IsZero() || w.SchedulingObservation.State != "Scheduled" {
+		t.Fatal("snapshot aliases workload observation fields")
 	}
 	for _, id := range []string{"x", "missing", ""} {
 		if _, err := s.WorkloadSnapshotForCustomer(ctx, "tenant", id); !errors.Is(err, ErrNotFound) {

@@ -359,20 +359,6 @@ func TestPostgresAccountReadsHTTPTenantSummaryOutage(t *testing.T) {
 			t.Fatalf("summary outage misclassified: HTTP %d", w.Code)
 		}
 	})
-	t.Run("operator-service-credit", func(t *testing.T) {
-		f := newHumanAuthorizationFixture(t)
-		ledger := &billingFake{}
-		f.api.Billing = ledger
-		f.b.Close()
-		r := httptest.NewRequest(http.MethodPost, "/synthetic-service-credit", strings.NewReader("{}"))
-		r.SetPathValue("tenant_id", f.tenant)
-		r = r.WithContext(context.WithValue(r.Context(), ctxOperatorAccount, "synthetic-operator"))
-		w := httptest.NewRecorder()
-		f.api.HandleGrantServiceCredit(w, r)
-		if w.Code != http.StatusServiceUnavailable || ledger.grants != 0 || ledger.begins != 0 {
-			t.Fatalf("summary outage reached billing or returned wrong status: HTTP %d", w.Code)
-		}
-	})
 }
 
 func TestPostgresAccountReadsRosterProfilesOverHTTP(t *testing.T) {
@@ -468,28 +454,17 @@ func TestPostgresHumanAuthorizationReadOutageIsNotTenantAbsence(t *testing.T) {
 		{"cloud-account-write", http.MethodPut, (*Accounts).HandlePutLinodeCloudAccount},
 		{"cloud-account-delete", http.MethodDelete, (*Accounts).HandleDeleteLinodeCloudAccount},
 		{"runtime-bindings", http.MethodGet, (*Accounts).HandleListRuntimeBindings},
-		{"billing-summary", http.MethodGet, (*Accounts).HandleGetTenantBilling},
-		{"billing-statement", http.MethodGet, (*Accounts).HandleGetTenantBillingStatement},
-		{"checkout-create", http.MethodPost, (*Accounts).HandleCreateTenantCheckout},
-		{"checkout-read", http.MethodGet, (*Accounts).HandleGetTenantCheckout},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newHumanAuthorizationFixture(t)
 			f.api.Store = unavailableAfterHumanAccount{accountStore: f.b, close: f.b.Close}
-			ledger := &billingFake{}
-			checkout := &checkoutGatewayFake{store: ledger}
-			f.api.Billing, f.api.Checkout = ledger, checkout
 			r := httptest.NewRequest(tc.method, "/synthetic-authority-boundary", strings.NewReader("{}"))
 			r.Header.Set("Authorization", "Bearer synthetic-human-session")
 			r.SetPathValue("tenant_id", f.tenant)
-			r.SetPathValue("id", "synthetic-checkout")
 			w := httptest.NewRecorder()
 			tc.handle(f.api, w, r)
 			if w.Code != http.StatusServiceUnavailable {
 				t.Fatalf("membership read outage after successful identity lookup = %d, want 503", w.Code)
-			}
-			if ledger.reads != 0 || ledger.begins != 0 || ledger.checkoutReads != 0 || ledger.statementReads != 0 || checkout.calls != 0 {
-				t.Fatal("unavailable human authority reached billing/provider operations")
 			}
 		})
 	}

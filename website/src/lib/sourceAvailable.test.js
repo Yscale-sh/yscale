@@ -40,7 +40,7 @@ test("homepage, navigation and metadata do not offer hosted subscriptions", () =
     for (const forbidden of [/SIGNUP_URL/, /cost\s*\+\s*2%/i, /billed by the second/i, /create Yscale ID/i, /open source self-hosted/i]) assert(!forbidden.test(content), `${file}: ${forbidden}`);
   }
   const home = read(files[0]);
-  for (const phrase of ["business logic", "payment integrations", "No. You operate", "not OSI open source", "paid written license", "provider-enforced spending caps", "Azure and GCP GPU support is outside this release scope"]) assert(home.includes(phrase), phrase);
+  for (const phrase of ["business logic", "cloud cost estimates", "No. You operate", "not OSI open source", "paid written license", "provider-enforced spending caps", "Azure and GCP GPU support is outside this release scope"]) assert(home.includes(phrase), phrase);
   assert(home.includes('href="/docs/getting-started.html"'));
   assert.match(read("src/styles/source-release.css"), /body:has\(\.source-release\)\{min-width:0\}/);
 });

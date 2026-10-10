@@ -30,8 +30,7 @@ function reportedCount(value) {
 
 // The optional cost block central freezes after provider absence is confirmed.
 // It estimates what one run's capacity cost
-// at the rate it was quoted — not provider invoicing, not tenant billing, not
-// prepaid-ledger spend, and never an all-time total. Legacy records, runs still
+// at the rate it was quoted — never an all-time total. Legacy records, runs still
 // going, attempts that failed before capacity existed, and anything central
 // never observed carry no block at all, and a caller that turns that absence
 // into 0.00 has invented a number the platform never reported.

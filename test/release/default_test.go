@@ -17,7 +17,6 @@ var binaries = map[string]string{
 	"yscale-agent":             "./agent/cmd/yscale-agent",
 	"yscale-factory":           "./factory/cmd/yscale-factory",
 	"yscale-lifecycle-migrate": "./central/cmd/yscale-lifecycle-migrate",
-	"yscale-billing-migrate":   "./central/cmd/yscale-billing-migrate",
 }
 
 func TestDefaultBuildIncludesManagedMesh(t *testing.T) {

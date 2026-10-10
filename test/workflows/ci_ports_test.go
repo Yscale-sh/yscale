@@ -4,8 +4,8 @@
 // a fixed host port cannot run concurrently: post-merge run 35113859170
 // attempt 2 failed before tests with "Bind for 0.0.0.0:5432 failed: port is
 // already allocated" because the state-integration job published 5432:5432
-// while another job's PostgreSQL container held the port. The billing,
-// lifecycle and factory jobs already avoid this by declaring container-only
+// while another job's PostgreSQL container held the port. The lifecycle and
+// factory jobs already avoid this by declaring container-only
 // ports ("5432/tcp") and dialing the dynamically allocated host port through
 // ${{ job.services.<name>.ports['<port>'] }}.
 //

@@ -272,9 +272,9 @@ func TestPlanRefusesASecondCreateForAnAlreadySettledOperation(t *testing.T) {
 		t.Fatalf("refusal = %+v, want burst_original/succeeded", notClaimable)
 	}
 	// A machine already exists under this submission, so the refusal is an
-	// ambiguous create: the caller must keep the hold, not refund it.
+	// ambiguous create: the caller must keep the reservation, not release it.
 	if !d.CreateOutcomeAmbiguous(err) {
-		t.Fatalf("refusing a settled replay must stay ambiguous for billing: %v", err)
+		t.Fatalf("refusing a settled replay must stay ambiguous for admission: %v", err)
 	}
 	if backend.createCalls != 0 || meshCalls.mint.Load() != 0 {
 		t.Fatalf("a settled replay reached side effects: creates=%d mints=%d", backend.createCalls, meshCalls.mint.Load())
@@ -334,7 +334,7 @@ func TestPlanSettlesAFailedCreateTerminallyAndRecordsAmbiguity(t *testing.T) {
 		t.Fatal("Plan succeeded despite a failing provider create")
 	}
 	if !d.CreateOutcomeAmbiguous(err) {
-		t.Fatalf("a non-Linode create failure must stay ambiguous for billing: %v", err)
+		t.Fatalf("a non-Linode create failure must stay ambiguous for admission: %v", err)
 	}
 	if admission.failCalls != 1 || admission.failedLease != "lease-1" {
 		t.Fatalf("settlement calls=%d lease=%q, want 1 under lease-1", admission.failCalls, admission.failedLease)
@@ -356,7 +356,7 @@ func TestPlanSettlesAFailedCreateTerminallyAndRecordsAmbiguity(t *testing.T) {
 
 // CRASH BOUNDARY: the machine exists but the settlement that records it does
 // not. That is an ambiguous create, not a clean failure — the caller must
-// retain the billing hold and route it to manual attention.
+// retain the admission reservation and route it to manual attention.
 func TestPlanReportsAnUnsettleableSuccessAsAmbiguous(t *testing.T) {
 	d, backend, admission, trace, _, _ := newAdmissionSeamDecider(t)
 	admission.succeedErr = errors.New("database unavailable")
@@ -424,8 +424,8 @@ func TestPlanNeverReclaimsAnExpiredCreateLeaseForASecondCreateNode(t *testing.T)
 	}
 
 	// The machine may exist, so the answer is ambiguous: the caller keeps the
-	// hold and routes the submission to manual attention rather than refunding
-	// a burst that could be billing.
+	// reservation and routes the submission to manual attention rather than
+	// releasing a burst that could be billing.
 	if !d.CreateOutcomeAmbiguous(err) {
 		t.Fatalf("an expired create lease must be ambiguous, not a clean failure: %v", err)
 	}
@@ -465,7 +465,7 @@ func TestPlanRefusesALiveAttemptWithoutClaimingItStranded(t *testing.T) {
 
 // Settlement is not best effort. A failure the store could not record is a
 // failure nothing authoritative holds, so answering with the clean refusal
-// would release the tenant's hold for a burst whose outcome is unknown.
+// would release the tenant's reservation for a burst whose outcome is unknown.
 func TestPlanReportsAnUnsettleableFailureAsAmbiguous(t *testing.T) {
 	// Even the strongest provider-neutral clean-failure signal cannot be
 	// reported as clean when nothing recorded the settlement.
@@ -486,7 +486,7 @@ func TestPlanReportsAnUnsettleableFailureAsAmbiguous(t *testing.T) {
 		t.Fatalf("settlement calls = %d, want 1", admission.failCalls)
 	}
 	if !d.CreateOutcomeAmbiguous(err) {
-		t.Fatalf("an unrecorded failure must be ambiguous so the hold is retained: %v", err)
+		t.Fatalf("an unrecorded failure must be ambiguous so the reservation is retained: %v", err)
 	}
 	if !strings.Contains(err.Error(), "provider_create_ambiguous") {
 		t.Fatalf("the answer does not name the ambiguity: %v", err)
@@ -503,8 +503,8 @@ func TestPlanReportsAnUnsettleableFailureAsAmbiguous(t *testing.T) {
 }
 
 // The counterpart: when settlement DOES commit, a provider-proven failure stays
-// a clean failure and the caller's hold is released. Escalating this one would
-// strand credit on every ordinary rejected create.
+// a clean failure and the caller's reservation is released. Escalating this one
+// would strand admission capacity on every ordinary rejected create.
 func TestPlanKeepsASettledProvenFailureClean(t *testing.T) {
 	for _, provider := range []string{
 		backends.TypeFlyIO, backends.TypeLinode, backends.TypeAWS,

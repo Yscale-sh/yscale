@@ -37,18 +37,13 @@ type Meter struct {
 
 	// Reliability metrics — registered on the same registry so the existing
 	// ServiceMonitor scrape at /metrics picks them up without config changes.
-	provision                   *prometheus.HistogramVec // yscale_burst_provision_seconds — created→started
-	meshMint                    *prometheus.CounterVec   // yscale_mesh_mint_total{provider,result}
-	meshFallback                prometheus.Counter       // yscale_mesh_fallback_total
-	reapTotal                   *prometheus.CounterVec   // yscale_reap_total{result}
-	persistenceFailures         *prometheus.CounterVec   // yscale_state_persistence_failures_total{entity,operation}
-	podCIDRFree                 prometheus.Gauge         // yscale_podcidr_pool_free
-	agents                      prometheus.Gauge         // yscale_agents_connected
-	billingReconcileEnabled     prometheus.Gauge         // yscale_billing_reconciliation_enabled
-	billingReconcileHealthy     prometheus.Gauge         // yscale_billing_reconciliation_healthy
-	billingReconcileDifferences *prometheus.GaugeVec     // yscale_billing_reconciliation_differences{category}
-	billingReconcileRuns        *prometheus.CounterVec   // yscale_billing_reconciliation_runs_total{result}
-	billingReconcileLastSuccess prometheus.Gauge         // yscale_billing_reconciliation_last_success_timestamp_seconds
+	provision           *prometheus.HistogramVec // yscale_burst_provision_seconds — created→started
+	meshMint            *prometheus.CounterVec   // yscale_mesh_mint_total{provider,result}
+	meshFallback        prometheus.Counter       // yscale_mesh_fallback_total
+	reapTotal           *prometheus.CounterVec   // yscale_reap_total{result}
+	persistenceFailures *prometheus.CounterVec   // yscale_state_persistence_failures_total{entity,operation}
+	podCIDRFree         prometheus.Gauge         // yscale_podcidr_pool_free
+	agents              prometheus.Gauge         // yscale_agents_connected
 
 	// liveProvisioning derives yscale_burst_provisioning_{active,oldest_age_seconds}
 	// and _source_up from authoritative lifecycle and state/workload views at
@@ -128,26 +123,6 @@ func NewMeter() *Meter {
 			Name: "yscale_agents_connected",
 			Help: "Cluster Connectors currently connected via WebSocket.",
 		}),
-		billingReconcileEnabled: prometheus.NewGauge(prometheus.GaugeOpts{
-			Name: "yscale_billing_reconciliation_enabled",
-			Help: "Whether this central replica has the managed billing reconciliation worker enabled.",
-		}),
-		billingReconcileHealthy: prometheus.NewGauge(prometheus.GaugeOpts{
-			Name: "yscale_billing_reconciliation_healthy",
-			Help: "Whether the latest billing-ledger reconciliation is healthy (1) or paid admission is fail-closed (0).",
-		}),
-		billingReconcileDifferences: prometheus.NewGaugeVec(prometheus.GaugeOpts{
-			Name: "yscale_billing_reconciliation_differences",
-			Help: "Aggregate billing-ledger differences by bounded category; never labeled with tenant or object identifiers.",
-		}, []string{"category"}),
-		billingReconcileRuns: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "yscale_billing_reconciliation_runs_total",
-			Help: "Billing-ledger reconciliation attempts by bounded result (healthy, difference, or error).",
-		}, []string{"result"}),
-		billingReconcileLastSuccess: prometheus.NewGauge(prometheus.GaugeOpts{
-			Name: "yscale_billing_reconciliation_last_success_timestamp_seconds",
-			Help: "Unix timestamp of the most recent healthy billing-ledger reconciliation.",
-		}),
 
 		// RED HTTP metrics.
 		httpRequests: prometheus.NewCounterVec(prometheus.CounterOpts{
@@ -166,15 +141,10 @@ func NewMeter() *Meter {
 		teardownStream:   &teardownStreamCollector{},
 	}
 	m.podCIDRFree.Set(-1) // capacity is unknown until the first successful refresh
-	for _, category := range billingReconciliationCategories {
-		m.billingReconcileDifferences.WithLabelValues(category).Set(0)
-	}
 	reg.MustRegister(
 		m.active, m.hourly, m.costTotal, m.created, m.reaped, m.lifetime, m.fixed,
 		m.provision, m.meshMint, m.meshFallback, m.reapTotal, m.persistenceFailures, m.podCIDRFree, m.agents,
-		m.billingReconcileEnabled, m.billingReconcileHealthy, m.billingReconcileDifferences, m.billingReconcileRuns,
-		m.billingReconcileLastSuccess, m.httpRequests, m.httpDuration, m.liveProvisioning,
-		m.teardownStream,
+		m.httpRequests, m.httpDuration, m.liveProvisioning, m.teardownStream,
 	)
 	return m
 }
@@ -384,47 +354,4 @@ func (m *Meter) AgentDisconnected() {
 		return
 	}
 	m.agents.Dec()
-}
-
-var billingReconciliationCategories = [...]string{
-	"account_balance", "held_balance", "funding_reversal", "operation_ledger", "economic_object", "external_cash", "usage_capture",
-}
-
-// EnableBillingReconciliation marks this replica as subject to the managed
-// billing alert. OSS and unpaid deployments keep the default zero and quiet.
-func (m *Meter) EnableBillingReconciliation() {
-	if m != nil {
-		m.billingReconcileEnabled.Set(1)
-	}
-}
-
-// RecordBillingReconciliation publishes one read-only reconciliation result.
-// Its fixed arguments and normalized result keep every metric label bounded.
-func (m *Meter) RecordBillingReconciliation(result string, account, held, funding, operations, objects, externalCash, usageCapture int64) {
-	if m == nil {
-		return
-	}
-	values := [...]int64{account, held, funding, operations, objects, externalCash, usageCapture}
-	for i, category := range billingReconciliationCategories {
-		m.billingReconcileDifferences.WithLabelValues(category).Set(float64(values[i]))
-	}
-	switch result {
-	case "healthy":
-		m.billingReconcileHealthy.Set(1)
-		m.billingReconcileLastSuccess.SetToCurrentTime()
-	case "difference":
-		m.billingReconcileHealthy.Set(0)
-	default:
-		result = "error"
-		m.billingReconcileHealthy.Set(0)
-	}
-	m.billingReconcileRuns.WithLabelValues(result).Inc()
-}
-
-// MarkBillingReconciliationStale closes the observable health signal without
-// pretending the watchdog performed another database reconciliation.
-func (m *Meter) MarkBillingReconciliationStale() {
-	if m != nil {
-		m.billingReconcileHealthy.Set(0)
-	}
 }

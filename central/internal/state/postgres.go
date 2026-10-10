@@ -1147,8 +1147,7 @@ func deleteCustomerRows(ctx context.Context, tx pgx.Tx, id string) error {
 }
 
 // upsertWorkloadStmt writes a whole workload document, preserving the stored
-// Cost when the incoming document has none and preserving an exact billing
-// association's sticky ManualAttention flag.
+// Cost when the incoming document has none.
 //
 // It is the same shape of guard upsertCustomerStmt puts on RevokedAt, and it is
 // here for the same reason: one field on this row is written by a path that
@@ -1169,8 +1168,7 @@ func deleteCustomerRows(ctx context.Context, tx pgx.Tx, id string) error {
 // it (see upsertCustomerStmt for the INSERT ... SELECT form that does need one).
 // upsertWorkloadStmt writes a whole workload document, preserving the stored
 // Cost, monotonic NodeObservation, write-once PodObservation and GPUObservation,
-// monotonic SchedulingObservation, and exact billing association's
-// ManualAttention flag when the incoming document is stale.
+// and monotonic SchedulingObservation when the incoming document is stale.
 func mergedWorkloadDataExpr(table string) string {
 	// stored_obs_wins is true when the stored NodeObservation is present and the
 	// incoming one is absent, or when the incoming one would regress the stored
@@ -1245,14 +1243,7 @@ func upsertWorkloadStmt(table string) string {
 	merged := fmt.Sprintf("(%s) || (%s)", mergedWorkloadDataExpr(table), preservedWorkloadTransitionExpr(table))
 	return fmt.Sprintf(
 		`INSERT INTO %[1]s (id, data, updated_at) VALUES ($1, $2, now())
-		 ON CONFLICT (id) DO UPDATE SET data = CASE
-		   WHEN COALESCE((%[1]s.data->'Billing'->>'ManualAttention')::bool, false)
-		    AND %[1]s.data->>'CustomerID' = EXCLUDED.data->>'CustomerID'
-		    AND %[1]s.data->'Billing'->>'WorkloadRef' = EXCLUDED.data->'Billing'->>'WorkloadRef'
-		    AND %[1]s.data->'Billing'->>'HoldID' = EXCLUDED.data->'Billing'->>'HoldID'
-		   THEN jsonb_set(%[2]s, '{Billing,ManualAttention}', 'true'::jsonb)
-		   ELSE %[2]s
-		 END, updated_at = now()
+		 ON CONFLICT (id) DO UPDATE SET data = %[2]s, updated_at = now()
 		 WHERE %[1]s.data->>'FinishedAt' IS NULL OR (
 		   %[1]s.data->>'ID' = EXCLUDED.data->>'ID'
 		   AND %[1]s.data->>'CustomerID' = EXCLUDED.data->>'CustomerID'

@@ -46,7 +46,7 @@ spec:
     spec:
       containers:
         - name: yscale-cloud
-          image: ghcr.io/yscale-sh/yscale-cloud:v0.0.1-preview
+          image: ghcr.io/yscale-sh/yscale-cloud:v0.0.2-preview
           imagePullPolicy: Always
           args: ["-listen=:8443"]
           ports:

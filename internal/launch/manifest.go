@@ -39,7 +39,6 @@ const (
 	GateWorkloadOps38         = "workload-ops-38"
 	GateCredential184         = "credential-184"
 	GateCustomerPolicies      = "customer-policies"
-	GatePaidActivation        = "paid-activation"
 )
 
 // RequiredGateIDs returns the closed gate set in canonical order. Callers get
@@ -58,7 +57,6 @@ func RequiredGateIDs() []string {
 		GateWorkloadOps38,
 		GateCredential184,
 		GateCustomerPolicies,
-		GatePaidActivation,
 	}
 }
 

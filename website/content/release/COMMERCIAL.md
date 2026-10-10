@@ -42,7 +42,7 @@ activity that requires one.
 
 ## One full-source distribution
 
-The fabric factory, tenant lifecycle, quota and billing implementations are
+The fabric factory, tenant lifecycle and quota implementations are
 included in the same source distribution as the other components. There is
 no separate feature-restricted edition. Their presence does not grant the
 right to operate Yscale as a service for third parties without the required

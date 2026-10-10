@@ -137,11 +137,6 @@ func TestPostgresWorkloadRetryCurrentSourceAndAdmission(t *testing.T) {
 				}
 				want = http.StatusNotFound
 			}
-			var billingEvents []string
-			if want != http.StatusAccepted {
-				f.api.Workloads.EnforcePrepaidBilling = true
-				f.api.Workloads.Billing = &orderedBilling{events: &billingEvents}
-			}
 			path := "/v1/tenants/" + f.tenant + "/workloads/" + source.ID + "/retry"
 			response := callTenantWorkloadWithKey(f.api, http.MethodPost, path, "synthetic-human-session", "", "retry-current-source", "")
 			if want == http.StatusAccepted && response.Code == want {
@@ -176,9 +171,6 @@ func TestPostgresWorkloadRetryCurrentSourceAndAdmission(t *testing.T) {
 			}
 			if want != http.StatusAccepted && d.calls != 0 {
 				t.Errorf("unauthorized/stale retry reached provider plan %d times", d.calls)
-			}
-			if len(billingEvents) != 0 {
-				t.Errorf("refused retry reached credit reservation: %v", billingEvents)
 			}
 			if change == "spec-changed" && !strings.Contains(d.image, "synthetic-new-image") {
 				t.Error("retry executed stale source YAML")

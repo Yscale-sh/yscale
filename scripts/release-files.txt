@@ -1,6 +1,3 @@
-# Reviewed full-source inventory. One exact relative file per line.
-# Application and business implementation is included unchanged.
-# Add documents only after privacy review; code additions must pass coverage.
 .dockerignore
 .env.agent.example
 .env.cloud.example
@@ -89,13 +86,7 @@ burst/image/entrypoint.sh
 central/build/Dockerfile.cloud
 central/build/Dockerfile.cloud.buildkit
 central/build/Dockerfile.hosted-controller.buildkit
-central/cmd/yscale-billing-migrate/main.go
-central/cmd/yscale-billing-migrate/main_test.go
 central/cmd/yscale-cloud/automation_routes_test.go
-central/cmd/yscale-cloud/billing_reconciliation.go
-central/cmd/yscale-cloud/billing_reconciliation_integration_test.go
-central/cmd/yscale-cloud/billing_reconciliation_test.go
-central/cmd/yscale-cloud/billing_wiring_test.go
 central/cmd/yscale-cloud/enterprise.go
 central/cmd/yscale-cloud/enterprise_test.go
 central/cmd/yscale-cloud/lifecycle_wiring_test.go
@@ -103,7 +94,6 @@ central/cmd/yscale-cloud/logging_test.go
 central/cmd/yscale-cloud/main.go
 central/cmd/yscale-cloud/managed_mesh_config.go
 central/cmd/yscale-cloud/managed_mesh_config_test.go
-central/cmd/yscale-cloud/paid_gate_wiring_test.go
 central/cmd/yscale-cloud/reconciliation_monitor.go
 central/cmd/yscale-cloud/reconciliation_monitor_test.go
 central/cmd/yscale-cloud/routes_test.go
@@ -111,39 +101,6 @@ central/cmd/yscale-hosted-controller/main.go
 central/cmd/yscale-hosted-controller/main_test.go
 central/cmd/yscale-lifecycle-migrate/main.go
 central/cmd/yscale-lifecycle-migrate/main_test.go
-central/internal/billing/billing_test.go
-central/internal/billing/checkout.go
-central/internal/billing/doc.go
-central/internal/billing/errors.go
-central/internal/billing/migrate.go
-central/internal/billing/migrate_test.go
-central/internal/billing/reconciliation.go
-central/internal/billing/reconciliation_integration_test.go
-central/internal/billing/reconciliation_test.go
-central/internal/billing/schema.go
-central/internal/billing/statement.go
-central/internal/billing/store.go
-central/internal/billing/store_integration_test.go
-central/internal/billing/stripe.go
-central/internal/billing/stripe_test.go
-central/internal/billing/types.go
-central/internal/billing/usage_amount.go
-central/internal/billing/usage_amount_test.go
-central/internal/billing/usage_reconciliation.go
-central/internal/billing/usage_reconciliation_paging_test.go
-central/internal/billing/webhook_processor.go
-central/internal/billing/webhook_processor_test.go
-central/internal/billingcanary/browser.go
-central/internal/billingcanary/browser_test.go
-central/internal/billingcanary/canary_test.go
-central/internal/billingcanary/config.go
-central/internal/billingcanary/config_test.go
-central/internal/billingcanary/doc.go
-central/internal/billingcanary/evidence.go
-central/internal/billingcanary/evidence_test.go
-central/internal/billingcanary/redaction.go
-central/internal/billingcanary/redaction_test.go
-central/internal/billingcanary/stripe_sign.go
 central/internal/cost/composite_source.go
 central/internal/cost/composite_source_test.go
 central/internal/cost/meter.go
@@ -179,8 +136,6 @@ central/internal/handlers/accounts.go
 central/internal/handlers/accounts_audit.go
 central/internal/handlers/accounts_audit_test.go
 central/internal/handlers/accounts_authorization_integration_test.go
-central/internal/handlers/accounts_billing.go
-central/internal/handlers/accounts_billing_test.go
 central/internal/handlers/accounts_catalog_publishers.go
 central/internal/handlers/accounts_cloud_accounts.go
 central/internal/handlers/accounts_cloud_accounts_test.go
@@ -221,9 +176,6 @@ central/internal/handlers/agentstream_reap_test.go
 central/internal/handlers/agentstream_routes_test.go
 central/internal/handlers/agentstream_startup_reap_test.go
 central/internal/handlers/automation_templates.go
-central/internal/handlers/billing_webhook.go
-central/internal/handlers/billing_webhook_test.go
-central/internal/handlers/burst_billing.go
 central/internal/handlers/bursts.go
 central/internal/handlers/bursts_test.go
 central/internal/handlers/catalog_publishers_test.go
@@ -246,8 +198,6 @@ central/internal/handlers/middleware.go
 central/internal/handlers/operator.go
 central/internal/handlers/operator_tenants_test.go
 central/internal/handlers/operator_test.go
-central/internal/handlers/paidgate.go
-central/internal/handlers/paidgate_test.go
 central/internal/handlers/placement.go
 central/internal/handlers/placement_test.go
 central/internal/handlers/price.go
@@ -281,7 +231,6 @@ central/internal/handlers/workload_templates.go
 central/internal/handlers/workload_transitions_integration_test.go
 central/internal/handlers/workloads.go
 central/internal/handlers/workloads_announce_test.go
-central/internal/handlers/workloads_billing_test.go
 central/internal/handlers/workloads_cancel_test.go
 central/internal/handlers/workloads_cluster_test.go
 central/internal/handlers/workloads_complete_test.go
@@ -376,12 +325,6 @@ central/internal/state/agents_test.go
 central/internal/state/audit.go
 central/internal/state/audit_fake_test.go
 central/internal/state/audit_test.go
-central/internal/state/billing_audit_test.go
-central/internal/state/billing_hold_protection_test.go
-central/internal/state/billing_usage.go
-central/internal/state/billing_usage_integration_test.go
-central/internal/state/billing_usage_paging_test.go
-central/internal/state/billing_usage_test.go
 central/internal/state/burst_gpu_telemetry.go
 central/internal/state/burst_gpu_telemetry_test.go
 central/internal/state/burst_node_phase.go
@@ -461,7 +404,6 @@ central/internal/state/templates.go
 central/internal/state/templates_automation_test.go
 central/internal/state/templates_env_test.go
 central/internal/state/templates_test.go
-central/internal/state/workload_billing.go
 central/internal/state/workload_by_burst_test.go
 central/internal/state/workload_cancellation.go
 central/internal/state/workload_cancellation_integration_test.go
@@ -862,7 +804,6 @@ pricefeed/internal/sources/aws.go
 pricefeed/internal/sources/flyio.go
 pricefeed/internal/sources/linode.go
 pricefeed/internal/sources/sources.go
-scripts/billing-canary.sh
 scripts/cleanup.sh
 scripts/cost-report.sh
 scripts/k3s-flyio-pullsecret.sh
@@ -946,7 +887,6 @@ website/server/assets/nori-keyed.png
 website/server/assets/nori.png
 website/server/assets/phoenix-keyed.png
 website/server/assets/yscale-phoenix.png
-website/server/billing_proxy_test.go
 website/server/catalog_publisher_proxy_test.go
 website/server/cloud_account_proxy_test.go
 website/server/docs_test.go
@@ -981,8 +921,6 @@ website/src/lib/apiError.js
 website/src/lib/auditApi.js
 website/src/lib/auditApi.test.js
 website/src/lib/auth.js
-website/src/lib/billingApi.js
-website/src/lib/billingApi.test.js
 website/src/lib/catalogPublisherApi.js
 website/src/lib/catalogPublisherApi.test.js
 website/src/lib/cloudAccountApi.js

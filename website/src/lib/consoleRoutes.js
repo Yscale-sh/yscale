@@ -24,7 +24,6 @@ export const NAV_GROUPS = [
       { label: "Templates", icon: "templates", to: "/workloads/templates", hint: "Approved launch shapes" },
       { label: "Policies", icon: "policies", to: "/workloads/policies", hint: "Guardrails and automatic placement" },
       { label: "GitOps", icon: "gitops", to: "/workloads/gitops", hint: "Manifests, KEDA, and provenance" },
-      { label: "Billing", icon: "spend", to: "/workloads/billing", hint: "Balance, spendable credit, and active holds" },
       { label: "Team", icon: "team", to: "/workloads/team", hint: "Members and roles" },
       { label: "Audit", icon: "audit", to: "/workloads/audit", hint: "Governance journal" },
       { label: "Account", icon: "account", to: "/workloads/account", hint: "Identity and role" },

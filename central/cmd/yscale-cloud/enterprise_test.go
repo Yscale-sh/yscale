@@ -13,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yscale-sh/yscale/central/internal/billing"
 	"github.com/yscale-sh/yscale/central/internal/decider"
 	"github.com/yscale-sh/yscale/central/internal/factoryclient"
 	"github.com/yscale-sh/yscale/central/internal/handlers"
@@ -23,105 +22,6 @@ import (
 type pollerFactoryFake struct {
 	fabric factoryclient.Fabric
 	err    error
-}
-
-func TestStripeCheckoutActivationIsExplicitTestModeAndComplete(t *testing.T) {
-	for _, key := range []string{
-		"BILLING_CHECKOUT_ENABLED", "STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET", "STRIPE_ACCOUNT_ID",
-		"BILLING_CHECKOUT_SUCCESS_URL", "BILLING_CHECKOUT_CANCEL_URL",
-		"BILLING_CHECKOUT_MIN_MICRO_USD", "BILLING_CHECKOUT_MAX_MICRO_USD",
-	} {
-		t.Setenv(key, "")
-	}
-	if gateway, minimum, maximum, err := stripeCheckoutFromEnv(billing.NewStore(nil, false)); err != nil || gateway != nil || minimum != 0 || maximum != 0 {
-		t.Fatalf("disabled checkout = gateway=%v min=%d max=%d err=%v", gateway, minimum, maximum, err)
-	}
-	t.Setenv("BILLING_CHECKOUT_ENABLED", "true")
-	if _, _, _, err := stripeCheckoutFromEnv(nil); err == nil {
-		t.Fatal("checkout enabled without billing store")
-	}
-	store := billing.NewStore(nil, false)
-	if _, _, _, err := stripeCheckoutConfigFromEnv(false); err == nil {
-		t.Fatal("checkout enabled with incomplete Stripe configuration")
-	}
-	t.Setenv("STRIPE_SECRET_KEY", "sk_test_safe")
-	t.Setenv("STRIPE_WEBHOOK_SECRET", "whsec_test_safe")
-	t.Setenv("STRIPE_ACCOUNT_ID", "acct_test")
-	t.Setenv("BILLING_CHECKOUT_SUCCESS_URL", "https://app.example.test/billing/success")
-	t.Setenv("BILLING_CHECKOUT_CANCEL_URL", "https://app.example.test/billing/cancel")
-	if _, _, _, err := stripeCheckoutFromEnv(store); err == nil {
-		t.Fatal("checkout activated against an unverified schema")
-	}
-	gateway, minimum, maximum, err := stripeCheckoutConfigFromEnv(false)
-	if err != nil || gateway == nil || minimum != defaultStripeCheckoutMinMicroUSD || maximum != defaultStripeCheckoutMaxMicroUSD {
-		t.Fatalf("configured checkout = gateway=%v min=%d max=%d err=%v", gateway, minimum, maximum, err)
-	}
-	if _, _, _, err := stripeCheckoutConfigFromEnv(true); err == nil {
-		t.Fatal("unproven Stripe livemode activated")
-	}
-	t.Setenv("BILLING_CHECKOUT_MIN_MICRO_USD", "5000001")
-	if _, _, _, err := stripeCheckoutConfigFromEnv(false); err == nil {
-		t.Fatal("fractional-cent checkout bound accepted")
-	}
-}
-
-func TestStripeCashReconciliationActivationIsIndependentAndExplicit(t *testing.T) {
-	for _, key := range []string{
-		"BILLING_STRIPE_RECONCILIATION_ENABLED", "STRIPE_RECONCILIATION_SECRET_KEY",
-		"STRIPE_RECONCILIATION_ACCOUNT_ID",
-	} {
-		t.Setenv(key, "")
-	}
-	testStore := billing.NewStore(nil, false)
-	if provider, err := stripeCashProviderFromEnv(testStore, nil); err != nil || provider != nil {
-		t.Fatalf("disabled cash reconciliation = provider=%v err=%v", provider, err)
-	}
-
-	checkout, err := billing.NewStripeCashProvider(billing.StripeCashConfig{
-		SecretKey: "sk_test_safe", AccountID: "acct_checkout", LiveMode: false,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if provider, err := stripeCashProviderFromEnv(testStore, checkout); err != nil || provider != checkout {
-		t.Fatalf("checkout cash provider = %v err=%v, want existing gateway", provider, err)
-	}
-
-	t.Setenv("BILLING_STRIPE_RECONCILIATION_ENABLED", "true")
-	if _, err := stripeCashProviderFromEnv(nil, nil); err == nil {
-		t.Fatal("cash reconciliation activated without billing store")
-	}
-	if _, err := stripeCashProviderFromEnv(testStore, nil); err == nil {
-		t.Fatal("cash reconciliation activated with incomplete Stripe configuration")
-	}
-	t.Setenv("STRIPE_RECONCILIATION_SECRET_KEY", "sk_test_safe")
-	t.Setenv("STRIPE_RECONCILIATION_ACCOUNT_ID", "acct_test")
-	if provider, err := stripeCashProviderFromEnv(testStore, nil); err != nil || provider == nil {
-		t.Fatalf("configured cash reconciliation = provider=%v err=%v", provider, err)
-	}
-	if _, err := stripeCashProviderFromEnv(billing.NewStore(nil, true), nil); err == nil {
-		t.Fatal("unproven Stripe reconciliation livemode activated")
-	}
-}
-
-func TestStripeWebhookRouteIsAbsentWithoutCheckoutActivation(t *testing.T) {
-	for _, key := range []string{
-		"BILLING_CHECKOUT_ENABLED", "STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET", "STRIPE_ACCOUNT_ID",
-		"BILLING_CHECKOUT_SUCCESS_URL", "BILLING_CHECKOUT_CANCEL_URL",
-		"BILLING_CHECKOUT_MIN_MICRO_USD", "BILLING_CHECKOUT_MAX_MICRO_USD",
-	} {
-		t.Setenv(key, "")
-	}
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	disabled := http.NewServeMux()
-	registerAccountRoutes(disabled, state.New(), nil, handlers.NoopReconciler{}, log, billing.NewStore(nil, false))
-	req := httptest.NewRequest(http.MethodPost, "/v1/billing/webhooks/stripe", strings.NewReader(`{}`))
-	rec := httptest.NewRecorder()
-	disabled.ServeHTTP(rec, req)
-	if rec.Code != http.StatusNotFound {
-		t.Fatalf("disabled webhook route = %d", rec.Code)
-	}
-
 }
 
 func (f pollerFactoryFake) EnsureFabric(context.Context, string, string) error { return nil }
@@ -363,46 +263,6 @@ func TestCatalogAutomationRoutesRegisterAtExactPaths(t *testing.T) {
 		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
 		if rec.Code != http.StatusNotFound {
 			t.Fatalf("inexact automation path %s = %d, want 404", path, rec.Code)
-		}
-	}
-}
-
-func TestBillingRoutesAreAbsentWithoutExplicitBillingDatabase(t *testing.T) {
-	t.Setenv("YSCALE_ID_ISSUER", "https://id.yscale.sh")
-	t.Setenv("YSCALE_ID_INTERNAL_URL", "http://127.0.0.1:1")
-	mux := http.NewServeMux()
-	registerAccountRoutes(mux, state.New(), nil, handlers.NoopReconciler{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	for _, route := range []struct{ method, path string }{
-		{http.MethodGet, "/v1/tenants/cust_x/billing"},
-		{http.MethodGet, "/v1/tenants/cust_x/billing/statement?from=2026-01-01T00:00:00Z&to=2026-02-01T00:00:00Z"},
-		{http.MethodGet, "/v1/tenants/cust_x/billing/statement.csv?from=2026-01-01T00:00:00Z&to=2026-02-01T00:00:00Z"},
-		{http.MethodPost, "/v1/operator/tenants/cust_x/billing/service-credits"},
-	} {
-		rec := httptest.NewRecorder()
-		mux.ServeHTTP(rec, httptest.NewRequest(route.method, route.path, nil))
-		if rec.Code != http.StatusNotFound {
-			t.Fatalf("%s %s without billing DB = %d, want 404", route.method, route.path, rec.Code)
-		}
-	}
-}
-
-func TestBillingRoutesRegisterAtExactHumanAndOperatorPaths(t *testing.T) {
-	t.Setenv("YSCALE_ID_ISSUER", "https://id.yscale.sh")
-	t.Setenv("YSCALE_ID_INTERNAL_URL", "http://127.0.0.1:1")
-	t.Setenv("YSCALE_OPERATOR_SUBJECTS", "operator-subject")
-	mux := http.NewServeMux()
-	registerAccountRoutes(mux, state.New(), nil, handlers.NoopReconciler{},
-		slog.New(slog.NewTextHandler(io.Discard, nil)), billing.NewStore(nil, false))
-	for _, route := range []struct{ method, path string }{
-		{http.MethodGet, "/v1/tenants/cust_x/billing"},
-		{http.MethodGet, "/v1/tenants/cust_x/billing/statement?from=2026-01-01T00:00:00Z&to=2026-02-01T00:00:00Z"},
-		{http.MethodGet, "/v1/tenants/cust_x/billing/statement.csv?from=2026-01-01T00:00:00Z&to=2026-02-01T00:00:00Z"},
-		{http.MethodPost, "/v1/operator/tenants/cust_x/billing/service-credits"},
-	} {
-		rec := httptest.NewRecorder()
-		mux.ServeHTTP(rec, httptest.NewRequest(route.method, route.path, nil))
-		if rec.Code != http.StatusUnauthorized {
-			t.Fatalf("%s %s configured = %d, want 401 from human auth", route.method, route.path, rec.Code)
 		}
 	}
 }

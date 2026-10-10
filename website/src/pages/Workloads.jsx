@@ -21,7 +21,6 @@ import { TenantOnboarding, tenantLabel } from "../components/TenantOnboarding.js
 import { ApiError, fetchAccount } from "../lib/accountApi.js";
 import { beginDevPreview, beginLogin, canSignIn, getSession, signOut } from "../lib/auth.js";
 import { fetchClusters } from "../lib/clusterApi.js";
-import { formatMicroUSD } from "../lib/billingApi.js";
 import {
   CLUSTER_OBSERVATION_NOTE,
   automaticPlacementAvailable,
@@ -115,7 +114,6 @@ import {
 } from "../lib/workloadLaunchPolicy.js";
 import {
   AuditPage,
-  BillingPage,
   ClustersPage,
   GitOpsPage,
   PoliciesPage,
@@ -632,17 +630,7 @@ function TemplateReceipt({ receipt }) {
   );
 }
 
-function billingReceiptLabel(billing) {
-  if (!billing) return "No billing receipt";
-  if (billing.state === "captured") return `${formatMicroUSD(billing.capturedMicroUsd)} captured`;
-  if (billing.state === "pending") return `${formatMicroUSD(billing.reservedMicroUsd)} reserved`;
-  return `Hold ${billing.state}`;
-}
 
-// Where a run actually landed. Provider, region, and SKU are the three facts a
-// reader only needs once something has gone wrong, so they stay collapsed
-// rather than widening every row; a record central never placed says so in all
-// three rather than borrowing the request's preference as an outcome.
 function PlacementDisclosure({ workload }) {
   const placement = workloadPlacement(workload);
   return (
@@ -711,7 +699,6 @@ function GPURunTable({ workloads }) {
               </td>
               <td className="wk-col-cost">
                 <span className="wk-cost-value">{costCellLabel(workload)}</span>
-                <small>{billingReceiptLabel(workload.billing)}</small>
               </td>
               <td><AttentionCell workload={workload} /></td>
             </tr>
@@ -1679,8 +1666,7 @@ function SettingsPage({ account, tenant, clusterPolicy, clusterStatus, clusterOb
       </div>
       <Panel id="settings-writes-title" title="Where changes are made" className="wk-panel-flush">
         <ul className="wk-setting-links">
-          <li><Link to="/workloads/team"><b>Team and roles</b><span>Add members, change roles, and see who may submit paid work.</span><Icon name="chevron" size={14} /></Link></li>
-          <li><Link to="/workloads/billing"><b>Billing</b><span>Balance, spendable credit, and the holds open against running work.</span><Icon name="chevron" size={14} /></Link></li>
+          <li><Link to="/workloads/team"><b>Team and roles</b><span>Add members, change roles, and see who may submit workloads.</span><Icon name="chevron" size={14} /></Link></li>
           <li><Link to="/workloads/templates"><b>Templates</b><span>What this tenant may launch, and the runtime bindings templates reference.</span><Icon name="chevron" size={14} /></Link></li>
           <li><Link to="/workloads/clusters"><b>Clusters</b><span>Register connectors, review the fleet, and see which clusters are launchable now.</span><Icon name="chevron" size={14} /></Link></li>
           <li><Link to="/account"><b>Account access ledger</b><span>The identity behind this session, outside the tenant console.</span><Icon name="external" size={14} /></Link></li>
@@ -1759,7 +1745,7 @@ function StaticField({ label, value, error, hint }) {
 // document — it rides as X-Cluster-ID — so it is chosen here and restated on
 // review rather than appearing in the YAML the reader checks. Every state but
 // "one or more observed clusters" is a dead end on purpose: a submit with a
-// guessed target is a paid run landing somewhere nobody chose.
+// guessed target is a run landing somewhere nobody chose.
 function ClusterTargetSection({ step, clusters, status, error, onRetry, value, onChange, fieldError, allowAutomatic }) {
   const eligibleClusters = launchableClusters(clusters);
   const selected = findCluster(clusters, value);
@@ -2420,7 +2406,7 @@ function WorkloadFormPage({
 // an explicit receipt/state for that exact event.
 const TIMELINE_STEPS = [
   { key: "submitted", label: "Submitted", detail: "Central accepted the tenant request.", times: ["created_at"] },
-  { key: "quoted", label: "Quoted / placement selected", detail: "A provider placement or quote was recorded.", times: ["placement.decided_at", "placement.quoted_at", "placement.granted_at", "lifecycle.placed_at"], markers: ["placement.provider", "billing.quoteId"] },
+  { key: "quoted", label: "Quoted / placement selected", detail: "A provider placement or quote was recorded.", times: ["placement.decided_at", "placement.quoted_at", "placement.granted_at", "lifecycle.placed_at"], markers: ["placement.provider"] },
   { key: "capacity-requested", label: "Capacity requested", detail: "The provider capacity request was opened.", times: ["capacity.requested_at", "provider.requested_at", "lifecycle.capacity_requested_at"], markers: ["burst_id"] },
   { key: "provider-created", label: "Provider resource created", detail: "The paid provider resource was created.", times: ["provider.created_at", "provider_resource.created_at", "lifecycle.provider_created_at", "provider_created_at"], markers: ["provider.resource_id", "provider_resource.id"] },
   { key: "node-joined", label: "Node joined cluster", detail: "The provisioned node joined the selected cluster.", times: ["node.joined_at", "lifecycle.node_joined_at", "node_ready_at"] },
@@ -2431,7 +2417,7 @@ const TIMELINE_STEPS = [
   { key: "terminal", label: "Completed / failed / cancelled", detail: "The compute phase reached a terminal outcome.", times: ["finished_at"] },
   { key: "delete-requested", label: "Provider deletion requested", detail: "Teardown asked the provider to delete the resource.", times: ["provider_delete.requested_at", "cleanup.requested_at", "lifecycle.provider_delete_requested_at"] },
   { key: "provider-absent", label: "Provider absent", detail: "Yscale confirmed the provider resource no longer exists.", times: ["provider_delete.confirmed_at", "cleanup.confirmed_at", "lifecycle.cleanup_confirmed_at", "provider_absent_at"] },
-  { key: "settled", label: "Settled", detail: "Cost and the credit hold reached their final state.", times: ["settled_at", "lifecycle.settled_at", "billing.settledAt"] },
+  { key: "settled", label: "Settled", detail: "The cloud cost estimate reached its final state.", times: ["settled_at", "lifecycle.settled_at"] },
 ];
 
 function readPath(source, path) {
@@ -2500,8 +2486,6 @@ const FAILURE_RECOVERY = {
   connector_offline: { to: "/workloads/clusters" },
   no_eligible_placement: { to: "/workloads/launch" },
   price_above_cap: { to: "/workloads/launch" },
-  insufficient_credit: { to: "/workloads/billing" },
-  account_frozen: { to: "/workloads/billing" },
   placement_changed: { to: "/workloads/launch" },
   node_join_failed: { to: "#lifecycle-title" },
   gpu_unhealthy: { to: "#logs-title" },
@@ -2736,7 +2720,7 @@ function WorkloadDetail({ id, session, account, tenant, workloads, reloadWorkloa
                 stopped at this click will not come back to check. */}
             <span>
               Central stops the workload and begins tearing down its capacity. Teardown stays open until Yscale declares the provider
-              resource absent and the run settles — the cost estimate and the credit hold can still move after this.
+              resource absent and the run settles — the cloud cost estimate can still change after this.
             </span>
           </div>
           <div>
@@ -2747,7 +2731,7 @@ function WorkloadDetail({ id, session, account, tenant, workloads, reloadWorkloa
       )}
       {confirmingRetry && (
         <div className="wk-confirm" role="alertdialog" aria-labelledby="retry-title">
-          <div><b id="retry-title">Retry this as a new run?</b><span>Central submits a new potentially billable workload under current tenant policy and capacity limits.</span></div>
+          <div><b id="retry-title">Retry this as a new run?</b><span>Central submits a new workload that may incur cloud provider costs under current tenant policy and capacity limits.</span></div>
           <div>
             <button ref={retryDismissRef} type="button" className="wk-btn wk-btn-secondary" onClick={closeRetryConfirmation} disabled={retrying}>Keep record</button>
             <button type="button" className="wk-btn wk-btn-primary" onClick={retry} disabled={retrying} aria-busy={retrying}>{retrying ? "Starting…" : "Start new run"}</button>
@@ -2776,7 +2760,7 @@ function WorkloadDetail({ id, session, account, tenant, workloads, reloadWorkloa
           {cleanup?.message && <Note tone={cleanup.tone}>{cleanup.message}</Note>}
           <Note>
             A run is only finished for cost when Yscale has declared its provider resource absent and the run has settled. Until then the
-            estimate and any credit hold on this record can still change.
+            estimate on this record can still change.
           </Note>
         </Panel>
         <Panel id="request-title" title="Request">
@@ -2819,21 +2803,11 @@ function WorkloadDetail({ id, session, account, tenant, workloads, reloadWorkloa
             <DetailList rows={costDetailRows(workload)} />
             <Note>
               {frozenCost
-                ? "Central's recorded capacity estimate, with its measurement and freeze basis shown above. It is neither an invoice, a bill, nor a ledger balance, and it does not move once written."
-                : "Central has not recorded a frozen teardown estimate. Missing cost is not a zero charge or a settled billing receipt."}
+                ? "Central's recorded capacity estimate, with its measurement and freeze basis shown above. It does not move once written."
+                : "Central has not recorded a frozen teardown estimate. The cloud cost is still unknown."}
             </Note>
           </Panel>
         )}
-        {workload.billing && <Panel id="billing-receipt-title" title="Billing receipt" meta={workload.billing.state}>
-          <DetailList rows={[
-            { label: "Reserved", value: formatMicroUSD(workload.billing.reservedMicroUsd) },
-            { label: "Captured", value: formatMicroUSD(workload.billing.capturedMicroUsd) },
-            { label: "Hold", value: workload.billing.holdId },
-            { label: "Quote", value: workload.billing.quoteId },
-            { label: "Pricing version", value: workload.billing.pricingVersion },
-          ]} />
-          <Note>This is the workload's safe credit receipt. Payment and provider details are never shown here.</Note>
-        </Panel>}
         {(spec.data || workload.outcome) && (
           <Panel id="data-title" title="Data receipt">
             <DetailList rows={[
@@ -3251,7 +3225,6 @@ function routeContent(path, context) {
     case "policies": return <PoliciesPage key={key} {...context} />;
     case "gitops": return <GitOpsPage key={key} {...context} />;
     case "usage": return <UsagePage key={key} {...context} />;
-    case "billing": return <BillingPage key={key} {...context} />;
     case "team": return <TeamPage key={key} {...context} />;
     case "audit": return <AuditPage key={key} {...context} />;
     case "account": return <AccountPage key={key} account={context.account} tenant={context.tenant} />;

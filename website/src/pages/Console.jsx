@@ -78,9 +78,9 @@ const WORKLOADS = [
 ];
 
 const CAPACITY = [
-  { provider: "Fly.io", region: "ord", state: "Cold start only", detail: "warm resume not enabled", billing: "teardown destroys VM", tone: "watch" },
-  { provider: "Linode", region: "us-east", state: "Running", detail: "1× A100 allocated", billing: "$0.00058/sec", tone: "live" },
-  { provider: "AWS", region: "us-east-2", state: "On demand", detail: "quota checked 2m ago", billing: "bills after boot", tone: "ready" },
+  { provider: "Fly.io", region: "ord", state: "Cold start only", detail: "warm resume not enabled", cost: "teardown destroys VM", tone: "watch" },
+  { provider: "Linode", region: "us-east", state: "Running", detail: "1× A100 allocated", cost: "$0.00058/sec", tone: "live" },
+  { provider: "AWS", region: "us-east-2", state: "On demand", detail: "quota checked 2m ago", cost: "provider costs after boot", tone: "ready" },
 ];
 
 const AUDIT = [
@@ -238,7 +238,7 @@ export function Console() {
           <div className="capacity-list">
             {CAPACITY.map((item) => (
               <div key={`${item.provider}-${item.region}`} className={`capacity-row capacity-${item.tone}`}>
-                <i aria-hidden="true" /><div><strong>{item.provider}</strong><small>{item.region}</small></div><div><span>{item.state}</span><small>{item.detail}</small></div><b>{item.billing}</b>
+                <i aria-hidden="true" /><div><strong>{item.provider}</strong><small>{item.region}</small></div><div><span>{item.state}</span><small>{item.detail}</small></div><b>{item.cost}</b>
               </div>
             ))}
           </div>

@@ -28,7 +28,7 @@ Download the bundle for the host that will run the factory and central, verify
 it, and unpack it:
 
 ```sh
-VERSION=v0.0.1-preview
+VERSION=v0.0.2-preview
 TARGET=linux-amd64
 base=https://github.com/yscale-sh/yscale/releases/download/$VERSION
 curl -fLO "$base/yscale-$VERSION-$TARGET.tar.gz"

@@ -94,8 +94,6 @@ func TestNewMeterRegistersAllMetrics(t *testing.T) {
 	m.RecordPersistenceFailure("burst", "upsert")
 	m.SetPodCIDRFree(200)
 	m.AgentConnected()
-	m.EnableBillingReconciliation()
-	m.RecordBillingReconciliation("healthy", 0, 0, 0, 0, 0, 0, 0)
 	// The live provisioning series are collected from a source at scrape time,
 	// so they only exist once one is wired.
 	m.SetProvisioningSource(&fakeProvisioningSource{active: 1, oldest: time.Minute})
@@ -133,11 +131,6 @@ func TestNewMeterRegistersAllMetrics(t *testing.T) {
 		"yscale_state_persistence_failures_total",
 		"yscale_podcidr_pool_free",
 		"yscale_agents_connected",
-		"yscale_billing_reconciliation_enabled",
-		"yscale_billing_reconciliation_healthy",
-		"yscale_billing_reconciliation_differences",
-		"yscale_billing_reconciliation_runs_total",
-		"yscale_billing_reconciliation_last_success_timestamp_seconds",
 		"yscale_http_requests_total",
 		"yscale_http_request_duration_seconds",
 	} {
@@ -157,38 +150,6 @@ func TestRecordPersistenceFailureUsesBoundedLabels(t *testing.T) {
 	}
 	if !strings.Contains(body, `yscale_state_persistence_failures_total{entity="customer",operation="delete"} 1`) {
 		t.Errorf("customer persistence failure count wrong; body:\n%s", body)
-	}
-}
-
-func TestRecordBillingReconciliationPublishesBoundedAggregates(t *testing.T) {
-	m := NewMeter()
-	m.RecordBillingReconciliation("difference", 1, 2, 3, 4, 5, 6, 7)
-	body := scrapeMetrics(t, m)
-	for _, want := range []string{
-		`yscale_billing_reconciliation_healthy 0`,
-		`yscale_billing_reconciliation_differences{category="account_balance"} 1`,
-		`yscale_billing_reconciliation_differences{category="held_balance"} 2`,
-		`yscale_billing_reconciliation_differences{category="funding_reversal"} 3`,
-		`yscale_billing_reconciliation_differences{category="operation_ledger"} 4`,
-		`yscale_billing_reconciliation_differences{category="economic_object"} 5`,
-		`yscale_billing_reconciliation_differences{category="external_cash"} 6`,
-		`yscale_billing_reconciliation_differences{category="usage_capture"} 7`,
-		`yscale_billing_reconciliation_runs_total{result="difference"} 1`,
-	} {
-		if !strings.Contains(body, want) {
-			t.Errorf("metrics missing %q; body:\n%s", want, body)
-		}
-	}
-
-	m.RecordBillingReconciliation("healthy", 0, 0, 0, 0, 0, 0, 0)
-	body = scrapeMetrics(t, m)
-	if !strings.Contains(body, `yscale_billing_reconciliation_healthy 1`) ||
-		!strings.Contains(body, `yscale_billing_reconciliation_runs_total{result="healthy"} 1`) {
-		t.Errorf("healthy reconciliation not published; body:\n%s", body)
-	}
-	m.MarkBillingReconciliationStale()
-	if body = scrapeMetrics(t, m); !strings.Contains(body, `yscale_billing_reconciliation_healthy 0`) {
-		t.Errorf("stale reconciliation did not close health; body:\n%s", body)
 	}
 }
 
@@ -273,12 +234,6 @@ func TestAgentGauge(t *testing.T) {
 	m.AgentConnected()
 	m.AgentConnected()
 	m.AgentDisconnected()
-	m.EnableBillingReconciliation()
-	m.RecordBillingReconciliation("healthy", 0, 0, 0, 0, 0, 0, 0)
-	m.MarkBillingReconciliationStale()
-	m.RecordBillingReconciliation("healthy", 0, 0, 0, 0, 0, 0, 0)
-	m.MarkBillingReconciliationStale()
-	m.EnableBillingReconciliation()
 
 	body := scrapeMetrics(t, m)
 	if !strings.Contains(body, "yscale_agents_connected 1") {

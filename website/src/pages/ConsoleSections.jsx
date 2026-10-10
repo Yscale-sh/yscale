@@ -18,7 +18,6 @@ import {
 } from "../components/ConsoleKit.jsx";
 import { addMember, fetchMembers, fetchUsage, removeMember, updateMemberRole } from "../lib/accountApi.js";
 import { fetchAudit } from "../lib/auditApi.js";
-import { fetchBilling, formatMicroUSD } from "../lib/billingApi.js";
 import { deleteCluster, registerCluster, rotateClusterCredential } from "../lib/clusterApi.js";
 import { deleteLinodeCloudAccount, fetchLinodeCloudAccount, putLinodeCloudAccount } from "../lib/cloudAccountApi.js";
 import { fetchClusterPolicy, normalizeClusterPolicyDraft, putClusterPolicy } from "../lib/clusterPolicy.js";
@@ -112,43 +111,6 @@ function limitValue(row) {
 
 function TenantHeader({ tenant, title, copy, action }) {
   return <PageHeader eyebrow={tenant.customer_id} title={title} copy={copy} action={action} />;
-}
-
-export function BillingPage({ tenant, session }) {
-  const [state, setState] = useState({ status: "loading", data: null, error: null });
-  const load = useCallback(() => {
-    const controller = new AbortController();
-    setState((current) => ({ ...current, status: "loading", error: null }));
-    fetchBilling({ token: session.accessToken, tenantId: tenant.customer_id, signal: controller.signal })
-      .then((data) => setState({ status: "ready", data, error: null }))
-      .catch((error) => { if (error?.name !== "AbortError") setState({ status: "error", data: null, error }); });
-    return () => controller.abort();
-  }, [session.accessToken, tenant.customer_id]);
-  useEffect(load, [load]);
-  const billing = state.data;
-  return <>
-    <TenantHeader tenant={tenant} title="Billing" copy="Tenant credit available for workloads, including money temporarily reserved by active runs." />
-    {state.status === "loading" && <LoadingState label="Reading billing summary…" rows={4} />}
-    {state.status === "error" && <ErrorState title="Billing is unavailable." error={state.error} onRetry={load} />}
-    {billing && <>
-      <StatTiles ready label="Billing summary" tiles={[
-        { key: "balance", icon: "spend", label: "Balance", value: formatMicroUSD(billing.balanceMicroUsd), note: "total tenant credit" },
-        { key: "spendable", icon: "check", label: "Spendable", value: formatMicroUSD(billing.spendableMicroUsd), note: "available for new holds" },
-        { key: "held", icon: "clock", label: "Held", value: formatMicroUSD(billing.heldMicroUsd), note: "reserved by active work" },
-        { key: "debt", icon: "policies", label: "Debt", value: formatMicroUSD(billing.debtMicroUsd), note: billing.debtMicroUsd ? "must be resolved before new work" : "none reported" },
-      ]} />
-      {billing.frozen && <Note tone="warn"><b>Billing is frozen.</b> New billable workloads may be refused. Existing workload records remain readable.</Note>}
-      <Panel title="Active holds" meta={`${billing.openHolds.length} open`} className="wk-panel-flush">
-        {billing.openHolds.length === 0 ? <div className="wk-empty"><span className="wk-empty-icon" aria-hidden="true"><Icon name="check" /></span><div><h3>No active holds</h3><p>No workload credit is currently reserved.</p></div></div> :
-          <ul className="wk-billing-holds">{billing.openHolds.map((hold) => <li key={hold.id}>
-            <div><Link className="wk-text-link" to={`/workloads/${encodeURIComponent(hold.workloadId)}`}>{hold.workloadId}</Link><small>Hold {hold.id}</small></div>
-            <strong>{formatMicroUSD(hold.amountMicroUsd)}</strong>
-            <span>Expires {formatDate(hold.expiresAt)}</span>
-          </li>)}</ul>}
-      </Panel>
-      <Note>{billing.updatedAt ? `Summary updated ${formatDate(billing.updatedAt)}.` : "No summary timestamp was reported."} Holds are temporary reservations, not charges.</Note>
-    </>}
-  </>;
 }
 
 /* ---------------------------------------------------------------- clusters */
@@ -2111,7 +2073,7 @@ export function UsagePage({ tenant, session, workloads, workloadStatus, workload
       />
       <Note tone="warn">
         History uses only the up-to-100 newest workload records. It is a sample, not a live total. Each cost is an
-        estimate central froze at teardown, not billing.
+        estimate central froze at teardown.
       </Note>
       {workloadStatus === "error" && <ErrorState error={workloadError} onRetry={retry} title="The workload history sample is unavailable." />}
 

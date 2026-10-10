@@ -84,7 +84,7 @@ func MarkCreateAmbiguous(err error) error {
 }
 
 // CreateOutcomeAmbiguous is the single classifier central uses to derive the
-// one ambiguous boolean that drives durable settlement, billing behavior, and
+// one ambiguous boolean that drives durable settlement, admission release, and
 // cloud-account lease behavior for a failed CreateNode.
 //
 // Any non-nil error that carries no explicit proven-zero-resource marker is

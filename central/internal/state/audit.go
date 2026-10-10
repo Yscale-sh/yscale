@@ -143,20 +143,19 @@ const (
 	// operator's shared-capacity change as something a tenant did. Assign and
 	// delete carry the reserved namespace in Detail.Namespaces — they move the
 	// tenant's namespace authorization in the same durable write.
-	ActionHostedClusterAssign       = "cluster.hosted_assign"
-	ActionHostedClusterRotate       = "cluster.hosted_rotate_credential"
-	ActionHostedClusterDelete       = "cluster.hosted_delete"
-	ActionHostedCapacityRequest     = "tenant.hosted_capacity_request"
-	ActionCloudAccountConnect       = "cloud_account.connect"
-	ActionCloudAccountRotate        = "cloud_account.rotate"
-	ActionCloudAccountDisconnect    = "cloud_account.disconnect"
-	ActionRuntimeBindingSet         = "runtime_binding.set"
-	ActionRuntimeBindingDelete      = "runtime_binding.delete"
-	ActionCatalogPublisherCreate    = "catalog_publisher.create"
-	ActionCatalogPublisherRotate    = "catalog_publisher.rotate_credential"
-	ActionCatalogPublisherDelete    = "catalog_publisher.delete"
-	ActionBillingServiceCreditGrant = "billing.service_credit_grant"
-	ActionConnectorCommandAck       = "connector_command.ack"
+	ActionHostedClusterAssign    = "cluster.hosted_assign"
+	ActionHostedClusterRotate    = "cluster.hosted_rotate_credential"
+	ActionHostedClusterDelete    = "cluster.hosted_delete"
+	ActionHostedCapacityRequest  = "tenant.hosted_capacity_request"
+	ActionCloudAccountConnect    = "cloud_account.connect"
+	ActionCloudAccountRotate     = "cloud_account.rotate"
+	ActionCloudAccountDisconnect = "cloud_account.disconnect"
+	ActionRuntimeBindingSet      = "runtime_binding.set"
+	ActionRuntimeBindingDelete   = "runtime_binding.delete"
+	ActionCatalogPublisherCreate = "catalog_publisher.create"
+	ActionCatalogPublisherRotate = "catalog_publisher.rotate_credential"
+	ActionCatalogPublisherDelete = "catalog_publisher.delete"
+	ActionConnectorCommandAck    = "connector_command.ack"
 	// ActionConnectorCommandRequeue is an operator putting a dead-lettered
 	// connector command back on the delivery path. It is an authorization
 	// decision, not an observation — nothing in the ledger ever requeues on its
@@ -182,10 +181,9 @@ var validAuditActions = map[string]bool{
 	ActionCloudAccountDisconnect: true,
 	ActionRuntimeBindingSet:      true, ActionRuntimeBindingDelete: true,
 	ActionCatalogPublisherCreate: true, ActionCatalogPublisherRotate: true,
-	ActionCatalogPublisherDelete:    true,
-	ActionBillingServiceCreditGrant: true,
-	ActionConnectorCommandAck:       true,
-	ActionConnectorCommandRequeue:   true,
+	ActionCatalogPublisherDelete:  true,
+	ActionConnectorCommandAck:     true,
+	ActionConnectorCommandRequeue: true,
 }
 
 // Outcomes. Accepted and denied are the two halves of an authorization
@@ -258,7 +256,6 @@ const (
 	ReasonCatalogPublisherCreated           = "catalog_publisher_created"
 	ReasonCatalogPublisherCredentialRotated = "catalog_publisher_credential_rotated"
 	ReasonCatalogPublisherDeleted           = "catalog_publisher_deleted"
-	ReasonBillingServiceCreditGranted       = "billing_service_credit_granted"
 
 	ReasonHostedClusterAssigned          = "hosted_cluster_assigned"
 	ReasonHostedClusterCredentialRotated = "hosted_cluster_credential_rotated"
@@ -342,11 +339,8 @@ type AuditDetail struct {
 	MaxConcurrentBursts         *int     `json:"max_concurrent_bursts,omitempty"`
 	PreviousMaxHourlyUSD        *float64 `json:"previous_max_hourly_usd,omitempty"`
 	MaxHourlyUSD                *float64 `json:"max_hourly_usd,omitempty"`
-	AmountMicroUSD              int64    `json:"amount_micro_usd,omitempty"`
-	Currency                    string   `json:"currency,omitempty"`
 	// PlacementDigest is the identity of the placement decision a submission
-	// launched under — the same value the receipt carries and the billing quote
-	// is taken against. A hex digest of central's own decision content: it names
+	// launched under — the same value the receipt carries. A hex digest of central's own decision content: it names
 	// no provider account, carries no price and cannot hold submitter input, so
 	// it belongs in the closed detail shape. Empty on every event that decided
 	// no placement.

@@ -287,20 +287,6 @@
           "note": "synthetic fixture proof"
         }
       ]
-    },
-    {
-      "id": "paid-activation",
-      "required": true,
-      "status": "proven",
-      "bound_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      "evidence": [
-        {
-          "type": "local-file",
-          "path": "internal/launch/testdata/synthetic-proof.txt",
-          "sha256": "db3115857858e8eb66482d6074e874f9ebd97889b58e8a9c011acab5b32ce5bc",
-          "note": "synthetic fixture proof"
-        }
-      ]
     }
   ],
   "supported_cells": [

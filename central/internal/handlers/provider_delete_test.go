@@ -15,7 +15,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yscale-sh/yscale/central/internal/billing"
 	"github.com/yscale-sh/yscale/central/internal/cost"
 	"github.com/yscale-sh/yscale/central/internal/lifecycle"
 	"github.com/yscale-sh/yscale/central/internal/state"
@@ -492,33 +491,6 @@ func (f *deleteFixture) cleanupState(t *testing.T) string {
 	return f.deletes.cleanupEvent(f.deletes.get("burst_1").ID).State
 }
 
-func (f *deleteFixture) makeBilled(t *testing.T) *orderedBilling {
-	t.Helper()
-	association := &state.WorkloadBilling{
-		HoldID: 17, WorkloadRef: "wl_1", ReservedMicroUSD: 2_000_000,
-		Currency: "USD", AuthoritativeUsageRequired: true,
-	}
-	workload, err := f.store.GetWorkload("wl_1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	workload.Status = "failed"
-	workload.Billing = association
-	f.store.PutWorkload(workload)
-	burst, err := f.store.GetBurst("burst_1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	burst.Billing = association
-	if err := f.store.PutBurst(burst); err != nil {
-		t.Fatal(err)
-	}
-	events := []string{}
-	ledger := &orderedBilling{events: &events}
-	f.worker.Billing = ledger
-	return ledger
-}
-
 // Complete, Cancel and the watchdog all reach the same reap. Racing them must
 // produce ONE delete operation for one paid resource — a second would be a
 // second provider call, and the whole state machine exists to make that
@@ -724,9 +696,8 @@ func TestMeshCleanupFailureAfterProviderSuccessRetriesOnlyCleanup(t *testing.T) 
 	}
 }
 
-func TestPaidDeleteSettlesAuthoritativeCostBeforePermanentMeshFailure(t *testing.T) {
+func TestDeleteFreezesAuthoritativeCostBeforePermanentMeshFailure(t *testing.T) {
 	f := newDeleteFixture(t)
-	ledger := f.makeBilled(t)
 	f.worker.MaxAttempts = 3
 	f.reaper.setMeshErr(errors.New("mesh permanently unavailable"))
 	f.wls.reapBurst(context.Background(), "burst_1", "workload Succeeded")
@@ -745,56 +716,6 @@ func TestPaidDeleteSettlesAuthoritativeCostBeforePermanentMeshFailure(t *testing
 	}
 	if workload.Cost == nil || workload.Cost.Basis != state.WorkloadCostBasisRateRuntimeToProviderDelete {
 		t.Fatalf("authoritative provider-delete cost = %+v", workload.Cost)
-	}
-	wantCapture, err := billing.TrustedCaptureMicroUSD(workload.Cost.EstimatedUSD, workload.Billing.ReservedMicroUSD)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(ledger.captures) != 1 || ledger.captures["burst-capture:burst_1"] != wantCapture {
-		t.Fatalf("economic captures = %#v, want one authoritative capture of %d", ledger.captures, wantCapture)
-	}
-	if got := f.reaper.teardownCount("burst_1"); got != 1 {
-		t.Fatalf("provider deletes = %d, want one", got)
-	}
-	if got := f.deletes.get("burst_1").State; got != lifecycle.ProviderDeleteTerminated {
-		t.Fatalf("provider delete = %q, want %q", got, lifecycle.ProviderDeleteTerminated)
-	}
-}
-
-func TestPaidDeleteCostPersistenceExhaustionProtectsTheHold(t *testing.T) {
-	f := newDeleteFixture(t)
-	ledger := f.makeBilled(t)
-	f.worker.MaxAttempts = 3
-	f.worker.CostRecorder = &failingCostRecorder{store: f.store, err: errors.New("postgres unavailable")}
-	f.wls.reapBurst(context.Background(), "burst_1", "workload Succeeded")
-
-	for attempt := 1; attempt <= 3; attempt++ {
-		f.drain(t)
-		f.deletes.advance(time.Hour)
-	}
-
-	if got := f.cleanupState(t); got != lifecycle.OutboxDeadLetter {
-		t.Fatalf("cleanup repair = %q, want %q", got, lifecycle.OutboxDeadLetter)
-	}
-	workload, err := f.store.GetWorkload("wl_1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if workload.Cost != nil {
-		t.Fatalf("cost unexpectedly persisted: %+v", workload.Cost)
-	}
-	if workload.Billing == nil || !workload.Billing.ManualAttention {
-		t.Fatalf("billing association = %+v, want durable manual attention", workload.Billing)
-	}
-	if !f.store.BillingHoldProtected(state.DevCustomerID, "wl_1") {
-		t.Fatal("pending costless hold is not protected after cleanup exhaustion")
-	}
-	receipts, _, err := f.store.BillingUsageReceipts(context.Background(), 10)
-	if err != nil || len(receipts) != 1 || !receipts[0].ManualAttention || receipts[0].CostPresent {
-		t.Fatalf("usage reconciliation receipt = %+v, err %v", receipts, err)
-	}
-	if len(ledger.captures) != 0 {
-		t.Fatalf("captures = %#v, want none without durable authoritative cost", ledger.captures)
 	}
 	if got := f.reaper.teardownCount("burst_1"); got != 1 {
 		t.Fatalf("provider deletes = %d, want one", got)
@@ -1148,7 +1069,7 @@ func TestCleanupDrainIgnoresUnrelatedOutboxEvents(t *testing.T) {
 }
 
 // A worker with no provider client cannot confirm absence. Confirming it anyway
-// would stop the billing, release the /24 and settle the ledger for a node that
+// would stop the cost, release the /24 and freeze the receipt for a node that
 // is still running.
 func TestWorkerWithoutAReaperFailsClosed(t *testing.T) {
 	f := newDeleteFixture(t)

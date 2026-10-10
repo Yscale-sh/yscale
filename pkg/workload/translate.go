@@ -447,9 +447,8 @@ func validateNetworking(n *NetworkingSpec) error {
 		return nil
 	case NetworkingTierLite:
 		// The lite tier is permanently unsupported. Refuse it before any
-		// provider, mesh, billing or PodCIDR side effect so a legacy request
-		// cannot silently be run and billed as the full tier it never asked
-		// for.
+		// provider, mesh or PodCIDR side effect so a legacy request cannot
+		// silently be run as the full tier it never asked for.
 		return fmt.Errorf("spec.networking.tier %q is not supported: the lite tier has been removed; omit spec.networking.tier or set it to %q (empty defaults to full)", n.Tier, NetworkingTierFull)
 	default:
 		return fmt.Errorf("unknown spec.networking.tier %q (valid: %s)", n.Tier, NetworkingTierFull)

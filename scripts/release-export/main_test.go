@@ -35,7 +35,7 @@ func write(t *testing.T, root, name, body string) {
 
 func TestSourceAndAssetsKeepBusinessLogicAndOmitPrivateFiles(t *testing.T) {
 	files := map[string]string{
-		"central/internal/billing/store.go":            "package billing // yscale:" + "proprietary\n",
+		"central/internal/state/state.go":              "package state // yscale:" + "proprietary\n",
 		"factory/cmd/main.go":                          "package main\n",
 		"website/src/pages/Account.jsx":                "export const Account = () => null;\n",
 		"docs/getting-started.md":                      "# Public guide\n",
@@ -178,7 +178,7 @@ func TestCandidateInventoryRetainsFullImplementation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, required := range []string{"central/internal/billing/store.go", "factory/cmd/yscale-factory/main.go", "website/src/pages/Account.jsx", "website/src/pages/Console.jsx", "deploy/helm/yscale-agent/templates/NOTES.txt", "internal/launch/testdata/synthetic-proof.txt"} {
+	for _, required := range []string{"central/internal/state/state.go", "factory/cmd/yscale-factory/main.go", "website/src/pages/Account.jsx", "website/src/pages/Console.jsx", "deploy/helm/yscale-agent/templates/NOTES.txt", "internal/launch/testdata/synthetic-proof.txt"} {
 		if !slices.Contains(files, required) {
 			t.Errorf("required implementation omitted: %s", required)
 		}

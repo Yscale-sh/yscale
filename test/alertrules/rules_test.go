@@ -145,20 +145,6 @@ func TestStatePersistenceFailuresAlertImmediately(t *testing.T) {
 	}
 }
 
-func TestBillingReconciliationPagesFailClosed(t *testing.T) {
-	r := mustRule(t, loadRules(t), "BillingReconciliationUnhealthy")
-	if !strings.Contains(r.Expr, "yscale_billing_reconciliation_enabled") ||
-		!strings.Contains(r.Expr, "yscale_billing_reconciliation_healthy") || !strings.Contains(r.Expr, "absent(") {
-		t.Errorf("expr does not cover unhealthy and missing reconciliation evidence:\n%s", r.Expr)
-	}
-	if r.Labels["severity"] != "critical" {
-		t.Errorf("severity = %q, want critical", r.Labels["severity"])
-	}
-	if d, err := time.ParseDuration(r.For); err != nil || d <= 0 {
-		t.Errorf("for = %q, want a positive duration", r.For)
-	}
-}
-
 // metricName matches a central-exported series name in a PromQL expression.
 // Deliberately prefix-scoped: the synthetic-lifecycle rules read
 // kube-state-metrics series, which central does not declare.

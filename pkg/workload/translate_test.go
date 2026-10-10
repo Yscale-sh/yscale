@@ -109,8 +109,8 @@ func TestValidateRejectsMissingFields(t *testing.T) {
 		{
 			// The lite tier is permanently unsupported. Refusal must
 			// happen in Validate — which central runs before touching
-			// billing, provider, mesh or PodCIDR — so a legacy request
-			// cannot silently be run and billed as full capacity.
+			// provider, mesh or PodCIDR — so a legacy request cannot
+			// silently be run as full capacity.
 			name: "explicit lite tier is rejected",
 			w: &Workload{
 				Metadata: Metadata{Name: "w"},

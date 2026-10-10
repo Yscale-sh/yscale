@@ -20,16 +20,6 @@
       "outcome": "cross_tenant_workload_logs_return_uniform_not_found"
     },
     {
-      "seam": "tenant_billing_customer_facing_authorization",
-      "package": "github.com/yscale-sh/yscale/central/internal/handlers",
-      "tests": [
-        "TestTenantBillingSummaryIsMemberSafeAndTenantIsolated",
-        "TestTenantBillingStatementJSONAndCSVAreBoundedTenantSafeSnapshots",
-        "TestTenantCheckoutPersistsBeforeProviderAndIsExactlyReplayable"
-      ],
-      "outcome": "cross_tenant_billing_summary_statement_and_checkout_denied_before_billing_or_checkout_dispatch"
-    },
-    {
       "seam": "connector_credential_scope",
       "package": "github.com/yscale-sh/yscale/central/internal/handlers",
       "tests": [
@@ -112,7 +102,6 @@
     }
   ],
   "remaining_live_evidence": [
-    "mesh_network_reachability",
-    "paid_flow_activation"
+    "mesh_network_reachability"
   ]
 }

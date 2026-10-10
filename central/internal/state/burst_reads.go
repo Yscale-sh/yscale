@@ -61,7 +61,6 @@ func (s *Store) BurstSnapshotContext(ctx context.Context, id string) (*Burst, er
 
 func cloneBurstSnapshot(b *Burst) *Burst {
 	cp := *b
-	cp.Billing = cloneReadPointer(b.Billing)
 	cp.TerminalCost = cloneReadPointer(b.TerminalCost)
 	cp.LastHeartbeatAt = cloneReadPointer(b.LastHeartbeatAt)
 	cp.NodePhaseAt = cloneReadPointer(b.NodePhaseAt)

@@ -16,7 +16,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yscale-sh/yscale/central/internal/billing"
 	"github.com/yscale-sh/yscale/central/internal/lifecycle"
 	"github.com/yscale-sh/yscale/central/internal/state"
 	"github.com/yscale-sh/yscale/pkg/protocol"
@@ -139,13 +138,7 @@ type accountStore interface {
 // Multi-tenancy is an enterprise feature, so this handler is wired only by the
 // proprietary route hook (central/cmd/yscale-cloud/enterprise.go).
 type Accounts struct {
-	Store   accountStore
-	Billing billingStore
-	// Checkout is the configured external purchase boundary. nil keeps purchase
-	// routes unavailable even when balance/hold reads are enabled.
-	Checkout            billing.CheckoutGateway
-	CheckoutMinMicroUSD int64
-	CheckoutMaxMicroUSD int64
+	Store accountStore
 	// Resolver validates the presented human access token. nil means Yscale ID
 	// is not configured for this deployment, which DISABLES the route (404) the
 	// same way an unset YSCALE_ADMIN_TOKEN disables the admin routes.
@@ -187,18 +180,6 @@ type Accounts struct {
 	// A nil cipher disables connect while preserving safe reads/disconnects.
 	CredentialCipher      CredentialCipher
 	ValidateLinodeAccount func(context.Context, string, string) (string, error)
-}
-
-type billingStore interface {
-	EnsureAccount(context.Context, string) error
-	GetAccount(context.Context, string) (billing.Account, error)
-	ListOpenHolds(context.Context, string, int) ([]billing.Hold, error)
-	GetStatement(context.Context, string, time.Time, time.Time) (billing.Statement, error)
-	GrantCredit(context.Context, billing.CreditGrantRequest) error
-	BeginCheckout(context.Context, billing.BeginCheckoutRequest) (billing.Checkout, bool, error)
-	AttachCheckout(context.Context, string, string, billing.ProviderCheckoutSession) (billing.Checkout, error)
-	GetCheckout(context.Context, string, string) (billing.Checkout, error)
-	LiveMode() bool
 }
 
 // retryAfterSeconds is the Retry-After sent with a locally-shed lookup. One
@@ -289,9 +270,6 @@ type TenantWorkload struct {
 	// preserves an observed idle GPU (0%) as distinct from no observation.
 	GPUUtilPercent  *float64   `json:"gpu_util_percent,omitempty"`
 	LastHeartbeatAt *time.Time `json:"last_heartbeat_at,omitempty"`
-	// Billing is the economic receipt attached by the later reservation and
-	// settlement checkpoint. Omitted until a workload has a real ledger hold.
-	Billing *TenantWorkloadBillingReceipt `json:"billing,omitempty"`
 	// Outcome is the agent's receipt for the terminal observation: what the
 	// compute did, and separately what the artifact export did. Omitted on a run
 	// still going, on one whose agent reported only the phase, and on every
@@ -514,7 +492,6 @@ func (a *Accounts) HandleListWorkloads(w http.ResponseWriter, r *http.Request) {
 			Cost:             tenantWorkloadCost(record.Cost),
 			Outcome:          storedOutcomeResponse(record.Outcome),
 			SubmissionOrigin: record.SubmissionOrigin,
-			Billing:          a.tenantWorkloadBilling(r.Context(), record),
 			NodeObservation:  nodeObservationResponse(record.NodeObservation),
 			PodObservation:   podObservationResponse(record.PodObservation),
 			GPUObservation:   gpuObservationResponse(record.GPUObservation),
@@ -888,7 +865,7 @@ func (a *Accounts) HandleRetryWorkload(w http.ResponseWriter, r *http.Request) {
 	nextContext := withRetryOfWorkload(r.Context(), sourceID)
 	nextContext = withTemplateRef(nextContext, decision.Source.TemplateRef)
 	// The preparation's policy and source travel together. Admission rechecks
-	// both and journals acceptance before any billing or provider side effect.
+	// both and journals acceptance before any provider side effect.
 	nextContext = context.WithValue(nextContext, ctxCustomer, tenantWorkloadCustomer(prepared.Tenant))
 	nextContext = context.WithValue(nextContext, retryAdmissionKey{}, retryAdmission{store: a.Store, approval: prepared.Approval})
 	next := r.Clone(nextContext)

@@ -81,5 +81,5 @@ export function docPage(source, markdown) {
 <p class="aside-note">Start with installation, then review networking and provider requirements. You build your images and manage the supporting infrastructure.</p></aside>
 <main id="main" tabindex="-1"><div class="notice">This release is experimental. Check <a href="/docs/configuration-status.html">configuration status</a> for the provider and cluster you plan to run. Local smoke tests use fake provisioning.</div>
 <article>${renderDoc(source, markdown)}</article>
-<footer>You operate Yscale and pay providers directly. Budget settings are not provider billing caps; charges continue until resources are deleted. Source-code links may require repository access.</footer></main></div></body></html>`;
+<footer>You operate Yscale and pay providers directly. Budget settings are not provider spending caps; charges continue until resources are deleted. Source-code links may require repository access.</footer></main></div></body></html>`;
 }

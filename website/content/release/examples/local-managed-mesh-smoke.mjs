@@ -77,8 +77,7 @@ try {
   start('yscale-cloud', {
     FACTORY_URL: factoryURL, FACTORY_BEARER_TOKEN: factoryToken,
     YSCALE_ADMIN_TOKEN: adminToken, YSCALE_CENTRAL_ENDPOINT: centralURL,
-    YSCALE_TOKEN: randomBytes(32).toString('hex'),
-    BILLING_LIVE_MODE: 'false', PAID_RUNTIME_ENABLED: 'false'
+    YSCALE_TOKEN: randomBytes(32).toString('hex')
   }, [`-listen=127.0.0.1:${centralPort}`]);
   await waitFor(async () => (await request(centralURL + '/healthz')).ok, 'central readiness');
   const response = await request(centralURL + '/v1/admin/tenants', {

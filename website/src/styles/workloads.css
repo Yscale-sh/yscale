@@ -1590,18 +1590,7 @@ body.work-console-body { min-width: 0; }
   .wk-placement > summary .wk-icon { transition: none; }
 }
 
-.wk-billing-holds { display: grid; margin: 0; padding: 0; list-style: none; }
-.wk-billing-holds li { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 16px; padding: 16px 20px; border-top: 1px solid var(--wk-line); }
-.wk-billing-holds li:first-child { border-top: 0; }
-.wk-billing-holds div { display: grid; gap: 3px; min-width: 0; }
-.wk-billing-holds small, .wk-billing-holds span { color: var(--wk-text-3); font-size: 12px; }
-.wk-billing-holds strong { font-family: var(--font-mono); }
 .wk-tenant-actions { display: flex; flex-wrap: wrap; gap: 6px; }
-.wk-service-credit-confirm { display: grid; gap: 8px; padding: 18px; border: 1px solid var(--wk-line); background: var(--wk-surface-2); }
-.wk-service-credit-confirm strong { font: 600 28px/1 var(--font-mono); }
-.wk-service-credit-confirm p { color: var(--wk-text-2); }
 @media (max-width: 640px) {
-  .wk-billing-holds li { grid-template-columns: minmax(0, 1fr) auto; padding-inline: 14px; }
-  .wk-billing-holds li > span { grid-column: 1 / -1; }
   .wk-tenant-actions .wk-btn { flex: 1; }
 }

@@ -1,4 +1,4 @@
-// A workload submit is a paid operation, so the key that makes it repeatable
+// A workload submit is an operation, so the key that makes it repeatable
 // belongs to the form the human filled in — not to the fetch that carries it.
 // A double click, a page-level retry, or a proxy timeout must all arrive at
 // central under one key; only changed YAML or a freshly mounted form earns a

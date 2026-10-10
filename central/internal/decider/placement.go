@@ -30,9 +30,8 @@ var placementCandidateProviders = []string{
 }
 
 // placementQuoteTTL is how long one issued decision may be presented back at
-// launch. It matches the billing price quote's own validity window: a receipt
-// that outlived the quote it was priced from would bind a launch to a number
-// nothing is holding.
+// launch. A receipt that outlived it would bind a launch to a price the
+// catalog may no longer quote.
 const placementQuoteTTL = 5 * time.Minute
 
 // PlacementRefusal is a decision that resolved to no placement, carrying the
@@ -92,9 +91,6 @@ type placementDecision struct {
 	sku            string
 	hourly         float64
 	shapeHash      string
-	rateMicroUSD   int64
-	maxMicroUSD    int64
-	duration       time.Duration
 
 	// receipt is UNSEALED: it carries the decision content and no issuance
 	// identity, so its digest is already the stable one. Quote seals a copy per
@@ -200,7 +196,7 @@ func (d *Decider) decide(wl *workload.Workload, opts handlers.PlanOptions) (*pla
 	// Existing volumes are a HARD placement constraint, and the read that
 	// discovers them here touches nothing: a workload that cannot land where its
 	// data already is must be refused while the decision is still free, not
-	// after a hold, a /24 and a mesh key. PlanQuoted keeps its own check against
+	// after a reservation, a /24 and a mesh key. PlanQuoted keeps its own check against
 	// the resolution that also writes, as defence in depth.
 	storagePinBackend, storagePinRegion, err := d.storageAffinity(wl, opts.CustomerID)
 	if err != nil {
@@ -231,7 +227,7 @@ func (d *Decider) decide(wl *workload.Workload, opts handlers.PlanOptions) (*pla
 		return nil, err
 	}
 
-	duration := prepaidQuoteMaxDuration
+	duration := placementQuoteMaxDuration
 	if wl.Spec.Budget != nil && wl.Spec.Budget.Deadline > 0 && wl.Spec.Budget.Deadline < duration {
 		duration = wl.Spec.Budget.Deadline
 	}
@@ -259,7 +255,6 @@ func (d *Decider) decide(wl *workload.Workload, opts handlers.PlanOptions) (*pla
 	return &placementDecision{
 		backend: backendName, chosen: chosen, cloudAccountID: cloudAccountID,
 		resources: resources, region: region, sku: sku, hourly: hourly, shapeHash: shapeHash,
-		rateMicroUSD: rate, maxMicroUSD: maximum, duration: duration,
 		receipt: receipt,
 	}, nil
 }
@@ -267,8 +262,8 @@ func (d *Decider) decide(wl *workload.Workload, opts handlers.PlanOptions) (*pla
 // defaultPlacementRegion reports only a region the selected provider is known
 // to use. Linode can fall back across regions based on live capacity, so its
 // preferred region is not a placement promise. Never inherit another provider's
-// configuration: this value is signed into the receipt and persisted in billing
-// and lifecycle records as well as exposed on the burst Node.
+// configuration: this value is signed into the receipt and persisted in
+// lifecycle records as well as exposed on the burst Node.
 func (d *Decider) defaultPlacementRegion(backend string) string {
 	switch backend {
 	case backends.TypeFlyIO:

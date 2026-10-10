@@ -383,7 +383,7 @@ func TestTenantUsageIsReadableByEveryRoleAndScopedToOneTenant(t *testing.T) {
 
 	// The same arithmetic as the cluster-authenticated spend route, because a
 	// console disagreeing with the cap that refuses the next burst reads as a
-	// billing bug.
+	// cost-accounting bug.
 	cust, err := store.CustomerByID("cust_alice")
 	if err != nil {
 		t.Fatalf("CustomerByID: %v", err)

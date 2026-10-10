@@ -123,9 +123,9 @@ const (
 )
 
 // TestClaimBurst pins the exactly-once teardown guarantee. Each case is a
-// billing decision: won=true means this caller destroys a cloud VM and accrues
-// its cost, so a wrong true double-bills the customer and a wrong false leaves
-// a VM running.
+// cost decision: won=true means this caller destroys a cloud VM and accrues
+// its cost, so a wrong true double-counts the cost and a wrong false leaves a
+// VM running.
 func TestClaimBurst(t *testing.T) {
 	tests := []struct {
 		name     string

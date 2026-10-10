@@ -67,8 +67,8 @@ export function Serverless({ isMobile }) {
             That's a pod, and a pod already has a home.
           </p>
           <p className="reveal">
-            yscale takes the part of serverless worth stealing: per-second
-            billing, zero idle, scale from zero. And it delivers that into the
+            yscale takes the part of serverless worth stealing: ephemeral
+            nodes, zero idle, scale from zero. And it delivers that into the
             cluster you already operate. Same kubectl. Same pipelines. Same RBAC.
             When the job ends, the node is gone, and so is the bill.
           </p>

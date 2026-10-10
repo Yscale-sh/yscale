@@ -25,7 +25,6 @@ import (
 
 	"k8s.io/apimachinery/pkg/api/resource"
 
-	"github.com/yscale-sh/yscale/central/internal/billing"
 	"github.com/yscale-sh/yscale/central/internal/cost"
 	"github.com/yscale-sh/yscale/central/internal/credentialcipher"
 	"github.com/yscale-sh/yscale/central/internal/handlers"
@@ -354,9 +353,11 @@ const tsAuthKeyExpiry = 30 * time.Minute
 // there is no shared-tailnet fallback to absorb the delay.
 const meshMintTimeout = 10 * time.Second
 
-const prepaidQuoteMaxDuration = 24 * time.Hour
+// placementQuoteMaxDuration bounds the runtime a placement quote prices when
+// the workload declares no shorter deadline.
+const placementQuoteMaxDuration = 24 * time.Hour
 
-// Quote computes the exact provider shape and bounded customer charge without
+// Quote computes the exact provider shape and bounded cost estimate without
 // minting credentials, allocating network state, touching storage, or calling
 // a provider API.
 func (d *Decider) Quote(_ context.Context, wl *workload.Workload, opts handlers.PlanOptions) (*handlers.BurstQuote, error) {
@@ -393,18 +394,11 @@ func (d *Decider) Quote(_ context.Context, wl *workload.Workload, opts handlers.
 		Backend: decision.backend, CloudAccountID: decision.cloudAccountID, ShapeHash: decision.shapeHash,
 		Region: decision.region, SKU: decision.sku, HourlyUSD: decision.hourly,
 		Placement: &receipt,
-		Price: billing.PriceQuote{
-			QuoteID: quoteID, PricingVersion: state.PlacementPricingVersion, Currency: "USD",
-			Provider: decision.backend, SKU: decision.sku, Region: decision.region,
-			ProviderRateMicroUSDPerHour: decision.rateMicroUSD, CustomerRateMicroUSDPerHour: decision.rateMicroUSD,
-			MaximumDurationSeconds: int64(decision.duration.Seconds()), MaximumChargeMicroUSD: decision.maxMicroUSD,
-			IssuedAt: now, ValidUntil: now.Add(placementQuoteTTL),
-		},
 	}, nil
 }
 
 // Plan preserves the legacy interface while routing production through the
-// same quote-then-provision split used by prepaid admission.
+// same quote-then-provision split used by quoted admission.
 func (d *Decider) Plan(ctx context.Context, wl *workload.Workload, opts handlers.PlanOptions) (*handlers.Plan, error) {
 	quote, err := d.Quote(ctx, wl, opts)
 	if err != nil {
@@ -466,7 +460,7 @@ func (d *Decider) PlanQuoted(ctx context.Context, wl *workload.Workload, opts ha
 		if quote.Placement.Digest != placementDigest {
 			return nil, errors.New("placement decision no longer matches workload shape")
 		}
-		// A quote can sit in the submission path across a billing call and a
+		// A quote can sit in the submission path across an admission check and a
 		// durable write. Its issuance window is enforced HERE, at the last point
 		// before admission commits intent, so a decision nothing is holding any
 		// more cannot become a machine.
@@ -545,7 +539,7 @@ func (d *Decider) PlanQuoted(ctx context.Context, wl *workload.Workload, opts ha
 	// operation. Leaving it unsettled would leave an expiring lease behind on an
 	// operation nothing has resolved — so when the settlement itself cannot
 	// commit, the ambiguous settlement error is what the submitter gets, not the
-	// clean refusal that would release their hold.
+	// clean refusal that would release their admission reservation.
 	refuse := func(err error) (*handlers.Plan, error) {
 		return nil, d.settleFailedProviderCreate(ctx, admitted, err)
 	}
@@ -631,7 +625,7 @@ func (d *Decider) PlanQuoted(ctx context.Context, wl *workload.Workload, opts ha
 	backendID, err := chosen.CreateNode(ctx, spec)
 	if err != nil {
 		// One ambiguous boolean derived from the shared provider-neutral
-		// classifier drives durable settlement, billing behavior, and the
+		// classifier drives durable settlement, admission release, and the
 		// cloud-account lease. Every adapter marks failures that prove no
 		// billable resource exists; anything unmarked is ambiguous by default.
 		ambiguous := backends.CreateOutcomeAmbiguous(err)
@@ -645,14 +639,14 @@ func (d *Decider) PlanQuoted(ctx context.Context, wl *workload.Workload, opts ha
 		// A settlement that cannot commit ESCALATES the answer to ambiguous even
 		// when the provider proved the create never landed. The proof is real,
 		// but nothing durable holds it, and an operation left in processing is
-		// not a record anyone can bill or refund against — so the hold stays
+		// not a record anyone can reconcile against — so the reservation stays
 		// until an operator resolves it.
 		if settleErr := d.failProviderCreate(ctx, admitted, providerCreateSafeError(ambiguous, backendName, err)); settleErr != nil {
 			createErr = settleErr
 		}
 		// The cloud-account lease follows the provider classification captured
 		// above. A settlement-write failure may still escalate the error returned
-		// to billing, but it cannot turn a provider-proven absence into a machine.
+		// to the caller, but it cannot turn a provider-proven absence into a machine.
 		if cloudAccountID != "" && d.store != nil {
 			leaseCtx, leaseCancel := context.WithTimeout(context.Background(), cloudAccountLeaseOpTimeout)
 			defer leaseCancel()
@@ -1333,8 +1327,8 @@ func podSlotOf(cidr string) (int, bool) {
 
 // estimateCostUSD is a coarse pre-execution estimate so we can return
 // it in the API response. Reads through pkg/cloud/pricing so plan-time
-// estimate and selection logic agree on what a SKU costs. Real billing
-// accrues per-second on the running burst.
+// estimate and selection logic agree on what a SKU costs. Actual provider
+// cost accrues per-second on the running burst.
 func estimateCostUSD(wl *workload.Workload, backend string, resources backends.ResourceRequirements) float64 {
 	hourly, _ := hourlyAndSKU(wl, backend, resources)
 	hours := 1.0

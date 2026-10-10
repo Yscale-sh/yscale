@@ -32,8 +32,8 @@ func computeSpend(store *state.Store, cust *state.Customer) TenantSpend {
 // spendFromBursts is the arithmetic itself, split from the lookup so the human
 // tenant surface computes usage the SAME way this route does. It has to be one
 // implementation: a console showing a number that disagrees with the cap the
-// admission path enforces reads as a billing bug, and the two would drift the
-// first time either side changed.
+// admission path enforces reads as a cost-accounting bug, and the two would
+// drift the first time either side changed.
 func spendFromBursts(running []*state.Burst, limits TenantLimits) TenantSpend {
 	var hourly float64
 	for _, b := range running {

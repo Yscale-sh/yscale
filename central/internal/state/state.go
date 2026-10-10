@@ -88,7 +88,7 @@ func (m *MeshEndpoint) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// Customer is a billing/auth subject. The plaintext bearer is retained only
+// Customer is a tenant/auth subject. The plaintext bearer is retained only
 // for the request that minted it and for in-memory dev stores. Durable rows
 // carry its one-way verifier, and authentication hashes the presented token.
 type Customer struct {
@@ -406,7 +406,7 @@ func (c *Customer) Revoked() bool {
 }
 
 // Account is a HUMAN SaaS identity — the person who signs in to the dashboard,
-// as distinct from Customer, which is the tenant/billing subject an agent
+// as distinct from Customer, which is the tenant subject an agent
 // authenticates as with Customer.Token. The two are deliberately separate: a
 // human never holds a cluster token, and a cluster token never identifies a
 // human.
@@ -942,9 +942,6 @@ type Workload struct {
 	// the fact which controller asked, and guessing would invent the one thing
 	// this field exists to state honestly.
 	SubmissionOrigin protocol.SubmissionOrigin `json:",omitempty"`
-	// Billing is the safe prepaid association for platform-funded bursts. It
-	// deliberately contains no provider, payment, credential, or SKU metadata.
-	Billing *WorkloadBilling `json:",omitempty"`
 	// NodeObservation is the last connector-observed Kubernetes Node snapshot for
 	// the burst that backed this workload, stamped atomically with the burst's own
 	// node-phase update. nil means no connector has reported a persistable phase
@@ -1012,21 +1009,6 @@ type SchedulingObservation struct {
 	PodName string `json:",omitempty"`
 }
 
-type WorkloadBilling struct {
-	HoldID           int64
-	WorkloadRef      string
-	QuoteID          string
-	PricingVersion   int
-	ReservedMicroUSD int64
-	Currency         string
-	// AuthoritativeUsageRequired is the durable activation watermark for the
-	// provider-delete usage reconciliation contract. New prepaid reservations
-	// always set it; omission identifies legacy rows whose writer predated that
-	// proof and must not be retroactively relabeled as authoritative.
-	AuthoritativeUsageRequired bool `json:",omitempty"`
-	ManualAttention            bool `json:",omitempty"`
-}
-
 // Burst tracks a server-provisioned burst node — the backend booking
 // behind a Workload. The decider creates one per Plan; cleanup happens
 // when the agent reports the burst node has stopped or the workload
@@ -1059,11 +1041,9 @@ type Burst struct {
 	Status          string  // v0: "provisioning"
 	SKU             string  // backend SKU: Fly machine class / EC2 instance type / Linode plan
 	HourlyUSD       float64 // upstream per-hour rate; cost meter accrues this x lifetime on reap
-	// Billing is present only for platform-funded prepaid bursts. BYOC and
-	// hosted/shared capacity never receive a ledger association here.
-	Billing *WorkloadBilling `json:",omitempty"`
-	// TerminalCost freezes the trusted settlement amount when provider teardown
-	// succeeded but a later ledger write must be retried.
+	// TerminalCost is a frozen terminal cost observation carried by records
+	// written by older releases; the reap path reuses it instead of re-deriving
+	// the cost from the burst's lifetime.
 	TerminalCost *WorkloadCost `json:",omitempty"`
 	// ReapPending marks a burst whose cleanup was durably requested but has not
 	// finished. The watchdog retries these independently of workload budgets, so an
@@ -1119,7 +1099,7 @@ type Burst struct {
 	// supply stable Kubernetes timestamps (condition LastTransitionTime, node
 	// CreationTimestamp) that do not vary across reconnect replays; legacy
 	// connectors that omit it get central's receipt time. It is for ordering and
-	// status, not billing, and proves nothing about teardown — see
+	// status, not cost accounting, and proves nothing about teardown — see
 	// OccupancyObservedAt.
 	NodePhaseAt *time.Time `json:",omitempty"`
 
@@ -3321,7 +3301,6 @@ func (s *Store) PutWorkload(w *Workload) {
 			return
 		}
 		preserveWorkloadTransition(w, stored)
-		preserveWorkloadBillingManualAttention(w, stored)
 		if w.Cost == nil && stored.Cost != nil {
 			w.Cost = stored.Cost
 		}
@@ -3347,9 +3326,9 @@ func (s *Store) PutWorkload(w *Workload) {
 }
 
 // PutWorkloadDurable publishes a workload only after its configured durable
-// backend accepts it. It is reserved for records whose external economic
-// association must survive a restart even though they are not an accepted
-// submission and therefore have no authorization audit transaction.
+// backend accepts it. It is reserved for records that must survive a restart
+// even though they are not an accepted submission and therefore have no
+// authorization audit transaction.
 func (s *Store) PutWorkloadDurable(w *Workload) error {
 	s.mu.RLock()
 	p := s.persist
@@ -3367,7 +3346,6 @@ func (s *Store) PutWorkloadDurable(w *Workload) error {
 			return fmt.Errorf("%w: terminal workload binding conflict", ErrPersistence)
 		}
 		preserveWorkloadTransition(w, stored)
-		preserveWorkloadBillingManualAttention(w, stored)
 		if stored.NodeObservation != nil &&
 			(w.NodeObservation == nil ||
 				!nodePhaseIsFresh(&stored.NodeObservation.ObservedAt, stored.NodeObservation.SourceTimestamped,
@@ -3388,18 +3366,6 @@ func (s *Store) PutWorkloadDurable(w *Workload) error {
 	s.workloads[w.ID] = w
 	s.mu.Unlock()
 	return nil
-}
-
-func preserveWorkloadBillingManualAttention(incoming, stored *Workload) {
-	if incoming == nil || stored == nil || incoming.CustomerID != stored.CustomerID ||
-		incoming.Billing == nil || stored.Billing == nil || !stored.Billing.ManualAttention ||
-		incoming.Billing.WorkloadRef != stored.Billing.WorkloadRef ||
-		incoming.Billing.HoldID != stored.Billing.HoldID {
-		return
-	}
-	association := *incoming.Billing
-	association.ManualAttention = true
-	incoming.Billing = &association
 }
 
 // GetWorkload looks up a workload by ID and returns a COPY. Callers must not
@@ -3783,31 +3749,6 @@ func (s *Store) WorkloadByBurst(burstID string) (*Workload, error) {
 		}
 	}
 	return nil, ErrNotFound
-}
-
-// BillingHoldProtected prevents expiry from turning a live burst or an
-// ambiguous provider-create hold back into spendable credit.
-func (s *Store) BillingHoldProtected(customerID, workloadRef string) bool {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	for _, w := range s.workloads {
-		if w.CustomerID == customerID && w.ID == workloadRef && w.Billing != nil {
-			if w.Billing.ManualAttention || (w.Status != "succeeded" && w.Status != "failed" && w.Status != "cancelled") {
-				return true
-			}
-			for _, b := range s.bursts {
-				if b.CustomerID == customerID && b.ID == w.BurstID && b.Billing != nil {
-					return true
-				}
-			}
-		}
-	}
-	for _, b := range s.bursts {
-		if b.CustomerID == customerID && b.Billing != nil && b.Billing.WorkloadRef == workloadRef {
-			return true
-		}
-	}
-	return false
 }
 
 // FinishWorkloadForBurst marks the workload backed by burstID finished, for a

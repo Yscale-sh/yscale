@@ -309,7 +309,7 @@ func (t *Tenants) Provision(opts ProvisionOpts) (*ProvisionResult, error) {
 //     record deleted anywhere. The field predates the account lifecycle, when
 //     the offboard API set it as soon as the customer stopped working and had
 //     no residue check to gate it on; callers written against that API read it
-//     as "this tenant is done, stop billing it, drop it from the console".
+//     as "this tenant is done, drop it from the console".
 //     Keeping that meaning is why it is an alias and not a row flag: moving it
 //     onto the row would silently leave those callers showing a revoked tenant
 //     as live until an operator cleared its residue by hand. It stays for them,

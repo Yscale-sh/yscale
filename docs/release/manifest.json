@@ -128,12 +128,6 @@
       "required": true,
       "status": "pending",
       "missing": "Supply independently verified customer-policies evidence bound to a real release identity before claiming operational readiness."
-    },
-    {
-      "id": "paid-activation",
-      "required": true,
-      "status": "pending",
-      "missing": "Supply independently verified paid-activation evidence bound to a real release identity before claiming operational readiness."
     }
   ],
   "supported_cells": [

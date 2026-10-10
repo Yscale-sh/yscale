@@ -35,7 +35,7 @@ const AUDIENCES = [
       "Your three-node k3s box stays cozy — and when a job needs more than it has, a real cloud node joins your cluster for cents, does the work, and leaves. Self-host the whole engine free on your own accounts.",
     points: [
       "self-host free — your clouds, your keys, your bill",
-      "per-second billing: experiments cost pennies",
+      "cloud cost estimates for each experiment",
       "one Helm chart; nothing else to run in-cluster",
     ],
     cta: { label: "create account →", href: SIGNUP_URL },

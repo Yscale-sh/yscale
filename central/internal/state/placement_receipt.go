@@ -169,8 +169,6 @@ const (
 	// instead of silently changing what they meant.
 	PlacementCandidateSetVersion = "v1"
 	// PlacementPricingVersion versions the price catalog the rates came from.
-	// It is the same number the billing price quote carries, deliberately: a
-	// receipt and the hold taken against it must not claim different catalogs.
 	PlacementPricingVersion = 1
 	// MaxPlacementCandidates bounds the serialized candidate list. The current
 	// supported provider set is five; the bound leaves room without ever letting

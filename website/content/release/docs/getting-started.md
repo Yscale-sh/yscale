@@ -108,9 +108,9 @@ shows the handoff. Creating a tenant with a real factory starts a billable
 coordination VM; it is not a free signup action.
 
 Keep the default `managedMesh: true` and full-network gateway. A tenant can
-simply represent your own team. No Yscale-operated identity service or payment
-checkout is required for the operator-token installation path. The web console
-is separate configuration, not a prerequisite for the first workload.
+simply represent your own team. No Yscale-operated identity service is required
+for the operator-token installation path. The web console is separate
+configuration, not a prerequisite for the first workload.
 
 ## 4. Hand the cluster to workload authors
 

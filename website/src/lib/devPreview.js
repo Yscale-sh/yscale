@@ -246,7 +246,6 @@ const PREVIEW_WORKLOADS = Object.freeze([
       quoteID: "quote_111111111111",
       digest: "1111111111111111111111111111111111111111111111111111111111111111",
     }),
-    billing: { hold_id: 8101, state: "pending", reserved_micro_usd: 8000000, captured_micro_usd: 0, currency: "USD", quote_id: "quote_preview_a100", pricing_version: 1 },
     // Central records what a run was launched from, so this record shows exact
     // provenance while wl_preview_legacy below — written before the contract —
     // can only have a template inferred from its shape.
@@ -331,7 +330,6 @@ const PREVIEW_WORKLOADS = Object.freeze([
       quoteID: "quote_222222222222",
       digest: "2222222222222222222222222222222222222222222222222222222222222222",
     }),
-    billing: { hold_id: 8102, state: "captured", reserved_micro_usd: 1000000, captured_micro_usd: 500000, currency: "USD", quote_id: "quote_preview_cpu", pricing_version: 1 },
     cost: {
       usd: 0.5,
       hourly_usd: 2.5,
@@ -913,15 +911,6 @@ const PREVIEW_USAGE = Object.freeze({
 
 let usage = structuredClone(PREVIEW_USAGE);
 
-const PREVIEW_BILLING = Object.freeze({
-  "tenant-acme-research": {
-    tenant_id: "tenant-acme-research", currency: "USD", balance_micro_usd: 42000000, held_micro_usd: 8000000, spendable_micro_usd: 34000000, debt_micro_usd: 0, frozen: false, updated_at: "2026-08-16T11:30:00Z",
-    open_holds: [{ id: 8101, workload_id: "wl_preview_train", amount_micro_usd: 8000000, expires_at: "2026-08-16T20:18:00Z", created_at: "2026-08-12T20:18:04Z" }],
-  },
-  "tenant-platform-lab": { tenant_id: "tenant-platform-lab", currency: "USD", balance_micro_usd: 0, held_micro_usd: 0, spendable_micro_usd: 0, debt_micro_usd: 1250000, frozen: true, updated_at: "2026-08-16T11:30:00Z", open_holds: [] },
-});
-let billing = structuredClone(PREVIEW_BILLING);
-
 const PREVIEW_OPERATOR_TENANTS = Object.freeze([
   { tenant_id: "tenant-acme-research", tenant_name: "Acme Research", plan: "enterprise-preview", running_bursts: 2, hourly_usd: 7.25, projected_daily_usd: 174, limits: { max_concurrent_bursts: 8, max_hourly_usd: 24 } },
   { tenant_id: "tenant-platform-lab", tenant_name: "Platform Lab", plan: "enterprise-preview", running_bursts: 0, hourly_usd: 0, projected_daily_usd: 0, limits: { max_concurrent_bursts: 4, max_hourly_usd: 6 } },
@@ -970,7 +959,6 @@ export function resetDevPreview() {
   gitOpsSources = structuredClone(PREVIEW_GITOPS_SOURCES);
   clusterRegistry = structuredClone(PREVIEW_CLUSTER_REGISTRY);
   usage = structuredClone(PREVIEW_USAGE);
-  billing = structuredClone(PREVIEW_BILLING);
   catalogPublishers = structuredClone(PREVIEW_CATALOG_PUBLISHERS);
   runtimeBindings = structuredClone(PREVIEW_RUNTIME_BINDINGS);
   try {
@@ -1032,12 +1020,6 @@ function seedFirstWorkspaceFixtures(tenant) {
       limits: { max_concurrent_bursts: 1, max_hourly_usd: 1 },
     },
   };
-  billing = { [tenantId]: { tenant_id: tenantId, currency: "USD", balance_micro_usd: 0, held_micro_usd: 0, spendable_micro_usd: 0, debt_micro_usd: 0, frozen: false, open_holds: [] } };
-}
-
-export function previewBilling(tenantId) {
-  const record = billing[tenantId];
-  return record ? Promise.resolve(structuredClone(record)) : Promise.reject(new ApiError(404, "Billing is not available for that tenant."));
 }
 
 export function previewOperatorTenants() {
@@ -1046,14 +1028,6 @@ export function previewOperatorTenants() {
 
 export function previewHostedRequests() { return Promise.resolve({ requests: [] }); }
 export function previewHostedClusters() { return Promise.resolve({ clusters: [] }); }
-
-export function previewGrantServiceCredit(tenantId, amountMicroUsd, idempotencyKey) {
-  if (!PREVIEW_OPERATOR_TENANTS.some((tenant) => tenant.tenant_id === tenantId)) return Promise.reject(new ApiError(404, "That tenant is not in operator inventory."));
-  if (!Number.isSafeInteger(amountMicroUsd) || amountMicroUsd <= 0 || typeof idempotencyKey !== "string" || !idempotencyKey) return Promise.reject(new ApiError(400, "A positive amount and operation key are required."));
-  const record = billing[tenantId];
-  if (record) billing = { ...billing, [tenantId]: { ...record, balance_micro_usd: record.balance_micro_usd + amountMicroUsd, spendable_micro_usd: record.spendable_micro_usd + amountMicroUsd, updated_at: new Date().toISOString() } };
-  return Promise.resolve({ tenant_id: tenantId, amount_micro_usd: amountMicroUsd, currency: "USD", idempotency_key: idempotencyKey, granted: true });
-}
 
 export function previewCreateTenant(name, token) {
   restorePreviewAccount(token);

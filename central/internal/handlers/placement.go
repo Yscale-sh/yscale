@@ -125,8 +125,8 @@ type PlacementPreviewResponse struct {
 //
 // The order is not incidental. Authenticity, then expiry, then recomputation:
 // each check is cheaper than the one after it, and every one of them lands
-// before the admission reservation, the billing hold, the mesh key, the /24 and
-// the provider call. Everything this function does is a read — it recomputes
+// before the admission reservation, the mesh key, the /24 and the provider
+// call. Everything this function does is a read — it recomputes
 // the decision through the same Quote path the launch itself will use and
 // compares identities — so a refusal here costs the submitter nothing and
 // leaves nothing to compensate.
@@ -189,8 +189,8 @@ func (h *Workloads) verifyPlacementToken(r *http.Request, wl *workload.Workload,
 		return invalid(placementTokenHeader + " is not a launch token this deployment issued; preview the placement again and resubmit")
 	}
 	// EXPIRY IS DECIDED ON THE AUTHENTICATED WINDOW, and decided before the
-	// verification quote, the admission reservation, the billing hold and
-	// anything the decider would have to compensate. This is the value that used
+	// verification quote, the admission reservation and anything the decider
+	// would have to compensate. This is the value that used
 	// to be a client-supplied timestamp: it is now central's own, so a window
 	// that has closed cannot be reopened by re-typing it.
 	now := time.Now().UTC()
@@ -264,7 +264,7 @@ func (h *Workloads) verifyPlacementToken(r *http.Request, wl *workload.Workload,
 	// The launch is held to the AUTHENTICATED window, not the fresh one it was
 	// verified against. Narrowing the verified issuance here is what carries the
 	// preview's own deadline into PlanQuoted, which checks it again immediately
-	// before admission commits intent — so the time spent taking a billing hold
+	// before admission commits intent — so the time spent reserving admission
 	// cannot outlive the decision the customer was shown. Only ExpiresAt moves,
 	// and the digest deliberately excludes it, so the receipt still validates
 	// and still names the same decision.
@@ -304,7 +304,7 @@ func placementReceiptResponse(opts PlanOptions, receipt *state.PlacementReceipt)
 // one that spends money.
 //
 // It is observational by construction: no idempotency claim, no admission
-// reservation, no billing hold, no mesh credential, no storage write, no
+// reservation, no mesh credential, no storage write, no
 // provider call, no workload or burst record, no lifecycle operation, and no
 // audit row. The only thing it leaves behind is the answer.
 func (h *Workloads) PreviewPlacement(w http.ResponseWriter, r *http.Request) {

@@ -63,8 +63,12 @@ test("selected compute and placement never fall back to requested or obsolete fl
   assert.deepEqual(workloadGPU({ placement: { receipt: { selected: { provider: "linode", sku: "cpu-small" } } } }), { label: "CPU only", kind: "cpu", count: 0 });
 });
 
-test("every issue 95 failure state has bounded actionable copy", () => {
-  assert.equal(GPU_FAILURE_STATES.length, 12);
+test("every workload and provider failure state has bounded actionable copy", () => {
+  assert.deepEqual(GPU_FAILURE_STATES.map((state) => state.code), [
+    "no_connected_cluster", "connector_offline", "no_eligible_placement", "price_above_cap",
+    "placement_changed", "node_join_failed", "gpu_unhealthy", "pod_unschedulable",
+    "provider_delete_retrying", "manual_attention",
+  ]);
   assert.equal(new Set(GPU_FAILURE_STATES.map((state) => state.code)).size, GPU_FAILURE_STATES.length);
   for (const state of GPU_FAILURE_STATES) {
     assert.ok(state.title.length > 3 && state.title.length < 80);

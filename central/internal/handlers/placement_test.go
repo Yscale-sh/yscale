@@ -245,8 +245,8 @@ func (f *previewFixture) launchRaw(key string, tokens ...string) *httptest.Respo
 }
 
 // assertNothingSpent is the assertion every refusal shares: a launch that was
-// turned away must not have reserved admission, taken a billing hold, recorded
-// provider-create intent, or left a workload or burst behind.
+// turned away must not have reserved admission, recorded provider-create
+// intent, or left a workload or burst behind.
 func (f *previewFixture) assertNothingSpent(t *testing.T) {
 	t.Helper()
 	if _, plans := f.dec.counts(); plans != 0 {
@@ -563,8 +563,8 @@ func TestLaunchRejectsMalformedOrPartialPreviewCredentials(t *testing.T) {
 			if code := decodeCreate(t, rec).Code; code != PlacementDigestInvalidCode {
 				t.Fatalf("code = %q, want %q", code, PlacementDigestInvalidCode)
 			}
-			// Refused before the verification quote — so before admission, the
-			// billing hold and any provider-create intent.
+			// Refused before the verification quote — so before admission and
+			// any provider-create intent.
 			if quotes, plans := f.dec.counts(); plans != 0 || quotes != 0 {
 				t.Fatalf("a malformed credential reached quotes=%d plans=%d", quotes, plans)
 			}
@@ -602,7 +602,7 @@ func TestLaunchRefusesAStaleDigestPairedWithAFabricatedWindow(t *testing.T) {
 		t.Fatalf("code = %q, want %q", code, PlacementDigestInvalidCode)
 	}
 	// Only the preview's own quote was ever paid for: the forgery never reached
-	// the decision path, let alone admission or billing.
+	// the decision path, let alone admission.
 	if quotes, _ := f.dec.counts(); quotes != 1 {
 		t.Fatalf("quotes = %d, want only the preview's own", quotes)
 	}

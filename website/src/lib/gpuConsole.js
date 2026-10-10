@@ -7,8 +7,6 @@ export const GPU_FAILURE_STATES = Object.freeze([
   { code: "connector_offline", title: "Cluster connector offline", detail: "The cluster is registered, but its connector is not currently reachable. Work stays unlaunched.", action: "Check connector" },
   { code: "no_eligible_placement", title: "No eligible GPU placement", detail: "No provider and region satisfy the selected GPU, cluster, and policy constraints.", action: "Edit compute" },
   { code: "price_above_cap", title: "GPU price above cap", detail: "The trusted quote exceeds the maximum hourly GPU price. No paid resource was created.", action: "Edit budget" },
-  { code: "insufficient_credit", title: "Insufficient credit", detail: "Available tenant credit cannot cover the requested maximum charge.", action: "Open billing" },
-  { code: "account_frozen", title: "Account frozen", detail: "New paid workloads are paused for this tenant until billing is resolved.", action: "Open billing" },
   { code: "placement_changed", title: "Placement changed", detail: "The reviewed placement decision expired or changed before launch. Review the new decision before confirming.", action: "Review again" },
   { code: "node_join_failed", title: "Node failed to join", detail: "Capacity was created, but the node did not join the selected Kubernetes cluster.", action: "View timeline" },
   { code: "gpu_unhealthy", title: "GPU unhealthy", detail: "The node joined, but the requested GPU resource never became healthy.", action: "View node checks" },

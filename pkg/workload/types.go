@@ -4,8 +4,8 @@
 // will scale a burst node for.
 //
 // This is the OSS engine's surface for "yscale apply -f workload.yaml".
-// SaaS distributions wrap a richer API on top (auth, billing, multi
-// tenancy) but emit the same Workload structs internally.
+// SaaS distributions wrap a richer API on top (auth, multi tenancy) but
+// emit the same Workload structs internally.
 package workload
 
 import "time"
@@ -67,7 +67,7 @@ type Metadata struct {
 	Name      string            `yaml:"name"                json:"name"`
 	Namespace string            `yaml:"namespace,omitempty" json:"namespace,omitempty"`
 	Labels    map[string]string `yaml:"labels,omitempty"    json:"labels,omitempty"`
-	Tags      map[string]string `yaml:"tags,omitempty"      json:"tags,omitempty"` // owner/project for SaaS billing
+	Tags      map[string]string `yaml:"tags,omitempty"      json:"tags,omitempty"` // owner/project for cost attribution
 }
 
 // NetworkingSpec selects the burst-side networking shape for a workload.
@@ -78,7 +78,7 @@ type Metadata struct {
 //
 // The "lite" fast-boot tier is permanently unsupported. Validate rejects any
 // explicit "lite" request (and every other non-empty non-"full" value) before
-// provider, mesh, billing or PodCIDR side effects.
+// provider, mesh or PodCIDR side effects.
 type NetworkingSpec struct {
 	// Tier must be empty or "full". Validate rejects "lite" and any other
 	// non-empty value; ResolveNetworkingTier always resolves to "full" so

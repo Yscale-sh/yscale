@@ -1,5 +1,5 @@
 import { ApiError } from "./apiError.js";
-import { isDevPreviewToken, previewGrantServiceCredit, previewHostedClusters, previewHostedRequests, previewOperatorTenants } from "./devPreview.js";
+import { isDevPreviewToken, previewHostedClusters, previewHostedRequests, previewOperatorTenants } from "./devPreview.js";
 
 const RFC3339 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
 const QUEUE_KEYS = new Set(["requests"]);
@@ -13,8 +13,6 @@ const TENANT_PAGE_KEYS = new Set(["tenants", "next_after"]);
 const TENANT_KEYS = new Set(["tenant_id", "tenant_name", "plan", "running_bursts", "hourly_usd", "projected_daily_usd", "limits"]);
 const TENANT_LIMIT_KEYS = new Set(["max_concurrent_bursts", "max_hourly_usd"]);
 const TENANT_UPDATE_KEYS = new Set(["tenant", "changed"]);
-const SERVICE_CREDIT_KEYS = new Set(["tenant_id", "amount_micro_usd", "currency", "idempotency_key", "granted"]);
-const SERVICE_CREDIT_KEY_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$/;
 const MESSAGES = {
   0: "Could not reach the operator service from this browser.",
   401: "This session is no longer valid. Sign in again.",
@@ -129,27 +127,6 @@ export function tenantLimitValues(draft) {
     errors.maxConcurrentBursts = "Concurrent ceiling must be a non-negative whole number.";
   }
   return { values, errors };
-}
-
-export function usdToMicroUSD(value) {
-  if (typeof value !== "string" || !/^(?:0|[1-9]\d{0,9})(?:\.\d{1,6})?$/.test(value)) return { value: null, error: "Enter a positive USD amount with at most six decimal places." };
-  const [whole, fraction = ""] = value.split(".");
-  const micro = Number(whole) * 1_000_000 + Number(fraction.padEnd(6, "0"));
-  if (!Number.isSafeInteger(micro) || micro <= 0) return { value: null, error: "Service credit must be greater than zero and within the supported range." };
-  return { value: micro, error: "" };
-}
-
-export function createServiceCreditKey() {
-  const id = globalThis.crypto?.randomUUID?.() || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
-  return `svc-credit-${id}`;
-}
-
-export function normalizeServiceCreditGrant(payload, expectedTenantId = "", expectedAmount = null, expectedKey = "") {
-  if (!payload || typeof payload !== "object" || Array.isArray(payload) || Object.keys(payload).length !== SERVICE_CREDIT_KEYS.size || !hasOnlyKeys(payload, SERVICE_CREDIT_KEYS)
-      || payload.currency !== "USD" || payload.granted !== true || !safeNonNegative(payload.amount_micro_usd, true)) invalid("The operator service answered with an invalid service-credit receipt.");
-  const tenantId = cleanText(payload.tenant_id); const key = cleanText(payload.idempotency_key);
-  if (!tenantId || !key || (expectedTenantId && tenantId !== expectedTenantId) || (expectedKey && key !== expectedKey) || (expectedAmount !== null && payload.amount_micro_usd !== expectedAmount)) invalid("The operator service answered with the wrong service-credit receipt.");
-  return { tenantId, amountMicroUsd: payload.amount_micro_usd, currency: "USD", idempotencyKey: key, granted: true };
 }
 
 export function appendOperatorTenantPage(current, page) {
@@ -351,16 +328,6 @@ export function fetchOperatorTenants({ token, after = "", limit = 50, signal }) 
   if (after) query.set("after", after);
   query.set("limit", String(limit));
   return request(`/api/operator/tenants?${query}`, { token, signal }).then(normalizeOperatorTenantPage);
-}
-
-export function grantServiceCredit({ token, tenantId, amountMicroUsd, idempotencyKey, signal }) {
-  if (!cleanText(tenantId) || tenantId !== tenantId.trim() || !safeNonNegative(amountMicroUsd, true) || amountMicroUsd <= 0 || !SERVICE_CREDIT_KEY_RE.test(idempotencyKey || "")) {
-    return Promise.reject(new ApiError(400, "Invalid service-credit grant."));
-  }
-  const result = isDevPreviewToken(token)
-    ? previewGrantServiceCredit(tenantId, amountMicroUsd, idempotencyKey)
-    : request(`/api/operator/tenants/${encodeURIComponent(tenantId)}/billing/service-credits`, { token, method: "POST", body: { amount_micro_usd: amountMicroUsd, idempotency_key: idempotencyKey }, signal });
-  return Promise.resolve(result).then((payload) => normalizeServiceCreditGrant(payload, tenantId, amountMicroUsd, idempotencyKey));
 }
 
 export function updateOperatorTenantLimits({ token, tenantId, limits, signal }) {

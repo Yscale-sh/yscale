@@ -718,7 +718,7 @@ func TestWorkloadProxyMethodsPathsBodiesAndHeaders(t *testing.T) {
 			if got.header.Get("Content-Type") != tt.contentType {
 				t.Fatalf("Content-Type = %q, want %q", got.header.Get("Content-Type"), tt.contentType)
 			}
-			// Only paid-operation routes carry a key, and they carry it verbatim.
+			// Only workload submission routes carry a key, and they carry it verbatim.
 			if got.header.Get("Idempotency-Key") != tt.idempotency {
 				t.Fatalf("upstream Idempotency-Key = %q, want %q", got.header.Get("Idempotency-Key"), tt.idempotency)
 			}
@@ -1695,7 +1695,7 @@ func TestWorkloadPlainTextValidationErrorIsRelayedAsJSON(t *testing.T) {
 	}
 }
 
-// A submit is a paid operation, so the key that lets central deduplicate it is
+// A submit is an operation, so the key that lets central deduplicate it is
 // part of the request contract, not a nicety. Everything central would refuse
 // is refused here, before a run can be started twice.
 func TestWorkloadCreateRejectsUnusableIdempotencyKeys(t *testing.T) {

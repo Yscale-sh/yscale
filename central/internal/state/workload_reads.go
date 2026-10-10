@@ -69,13 +69,11 @@ func (s *Store) readWorkloadSnapshots(ctx context.Context, customerID, workloadI
 		row := WorkloadSnapshot{Workload: cloneWorkload(w)}
 		row.Workload.StartedAt = cloneReadPointer(w.StartedAt)
 		row.Workload.FinishedAt = cloneReadPointer(w.FinishedAt)
-		row.Workload.Billing = cloneReadPointer(w.Billing)
 		row.Workload.PodObservation = cloneReadPointer(w.PodObservation)
 		row.Workload.GPUObservation = cloneReadPointer(w.GPUObservation)
 		row.Workload.SchedulingObservation = cloneReadPointer(w.SchedulingObservation)
 		if b := s.bursts[w.BurstID]; b != nil && b.CustomerID == customerID {
 			cp := *b
-			cp.Billing = cloneReadPointer(b.Billing)
 			cp.TerminalCost = cloneReadPointer(b.TerminalCost)
 			cp.LastHeartbeatAt = cloneReadPointer(b.LastHeartbeatAt)
 			cp.NodePhaseAt = cloneReadPointer(b.NodePhaseAt)

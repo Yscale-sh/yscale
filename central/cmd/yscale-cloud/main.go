@@ -6,7 +6,7 @@
 //
 // The Connector (compatibility binary: yscale-agent) stores the customer's
 // YSCALE_TOKEN but no cloud-provider credentials. All scheduling, backend
-// selection, billing, and quota logic lives here.
+// selection, cost, and quota logic lives here.
 package main
 
 import (
@@ -22,7 +22,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/yscale-sh/yscale/central/internal/billing"
 	"github.com/yscale-sh/yscale/central/internal/cost"
 	"github.com/yscale-sh/yscale/central/internal/credentialcipher"
 	"github.com/yscale-sh/yscale/central/internal/decider"
@@ -59,10 +58,6 @@ var attachMeshBoxes = func(store *state.Store, log *slog.Logger, rec handlers.Po
 // independent of process signal setup.
 var backgroundWorkersContext = context.Background()
 
-// startBillingWorkers is enterprise-only. The OSS default is a no-op; the
-// enterprise hook starts only after main has installed the signal context.
-var startBillingWorkers = func(context.Context, *billing.Store, *state.Store, *handlers.PaidGate, *cost.Meter, *slog.Logger) {}
-
 // registerAdminRoutes wires the operator-only multi-tenant admin endpoints
 // (/v1/admin/tenants). OSS default: no-op — multi-tenancy is an enterprise
 // feature. The enterprise build overrides this hook in its own file's init().
@@ -79,16 +74,16 @@ var registerAdminRoutes = func(mux *http.ServeMux, store *state.Store, wls *hand
 // default: no-op — a self-hosted central has one operator and no SaaS identity
 // provider. The enterprise build overrides this hook in its own file's init().
 // rec is the reconciler, for the reason registerAdminRoutes takes one.
-var registerAccountRoutes = func(mux *http.ServeMux, store *state.Store, wls *handlers.Workloads, rec handlers.PolicyReconciler, log *slog.Logger, billingStores ...*billing.Store) {
+var registerAccountRoutes = func(mux *http.ServeMux, store *state.Store, wls *handlers.Workloads, rec handlers.PolicyReconciler, log *slog.Logger) {
 }
 
 // registerControlPlaneRoutes initializes the managed-mesh dependencies before
 // handlers capture them. Registering tenant/account routes first would leave
 // their Factory and poller callbacks nil for the lifetime of the server.
-func registerControlPlaneRoutes(mux *http.ServeMux, store *state.Store, wls *handlers.Workloads, rec handlers.PolicyReconciler, dec *decider.Decider, aa *handlers.AgentAuth, stream *handlers.AgentStream, log *slog.Logger, billingStore *billing.Store) {
+func registerControlPlaneRoutes(mux *http.ServeMux, store *state.Store, wls *handlers.Workloads, rec handlers.PolicyReconciler, dec *decider.Decider, aa *handlers.AgentAuth, stream *handlers.AgentStream, log *slog.Logger) {
 	attachMeshBoxes(store, log, rec, dec, aa, stream)
 	registerAdminRoutes(mux, store, wls, rec, log)
-	registerAccountRoutes(mux, store, wls, rec, log, billingStore)
+	registerAccountRoutes(mux, store, wls, rec, log)
 }
 
 // envDuration parses a duration from env (e.g. "24h", "2m"). Returns def when
@@ -111,25 +106,6 @@ func envDuration(key string, def time.Duration) time.Duration {
 		return def
 	}
 	return d
-}
-
-func billingConfigFromEnv() (dsn string, liveMode, enabled bool, err error) {
-	dsn = os.Getenv("BILLING_DATABASE_URL")
-	configuredMode := os.Getenv("BILLING_LIVE_MODE")
-	switch configuredMode {
-	case "", "false":
-	case "true":
-		liveMode = true
-	default:
-		return "", false, false, fmt.Errorf("BILLING_LIVE_MODE must be true or false")
-	}
-	if dsn == "" {
-		if liveMode {
-			return "", false, false, fmt.Errorf("BILLING_LIVE_MODE=true requires BILLING_DATABASE_URL")
-		}
-		return "", false, false, nil
-	}
-	return dsn, liveMode, true, nil
 }
 
 // lifecycleAdmissionFromEnv reads the authoritative-admission gate. It is an
@@ -189,105 +165,6 @@ func placementTokenSignerFromEnv() (*state.PlacementTokenSigner, error) {
 		return nil, nil
 	}
 	return state.NewPlacementTokenSigner(secret)
-}
-
-func prepaidBurstBillingFromEnv(billingAvailable bool) (bool, error) {
-	switch os.Getenv("BILLING_ENFORCE_PREPAID_BURSTS") {
-	case "", "false":
-		return false, nil
-	case "true":
-		if !billingAvailable {
-			return false, fmt.Errorf("BILLING_ENFORCE_PREPAID_BURSTS=true requires BILLING_DATABASE_URL")
-		}
-		return true, nil
-	default:
-		return false, fmt.Errorf("BILLING_ENFORCE_PREPAID_BURSTS must be true or false")
-	}
-}
-
-// paidRuntimeGateFromEnv builds the paid-runtime activation gate. The gate
-// defaults to disabled. When BILLING_ENFORCE_PREPAID_BURSTS=true it is enabled,
-// and each prerequisite must be independently satisfied before the gate opens.
-// The operator kill switch (PAID_RUNTIME_ENABLED) must be explicitly set to
-// "true" for the gate to reach the ready state.
-//
-// Prerequisites are represented individually so an operator sees exactly which
-// one is missing in /readyz/paid and startup logs, rather than a single boolean
-// that collapses distinct failures into "not ready".
-func paidRuntimeGateFromEnv(cfg paidGateInputs) (*handlers.PaidGate, error) {
-	if !cfg.PrepaidRequested {
-		return nil, nil
-	}
-
-	gate := handlers.NewPaidGate()
-	gate.Enable()
-
-	if cfg.BillingStoreOpen {
-		gate.SetReady(handlers.PrereqBillingDB)
-	}
-	{
-		declaredMode := os.Getenv("PAID_RUNTIME_LIVE_MODE")
-		switch declaredMode {
-		case "true":
-			if !cfg.BillingLiveMode {
-				return nil, fmt.Errorf("PAID_RUNTIME_LIVE_MODE=true but billing store is in test mode")
-			}
-			gate.SetReady(handlers.PrereqBillingMode)
-		case "false":
-			if cfg.BillingLiveMode {
-				return nil, fmt.Errorf("PAID_RUNTIME_LIVE_MODE=false but billing store is in live mode")
-			}
-			gate.SetReady(handlers.PrereqBillingMode)
-		case "":
-			return nil, fmt.Errorf("PAID_RUNTIME_LIVE_MODE must be explicitly set to true or false when paid runtime is requested")
-		default:
-			return nil, fmt.Errorf("PAID_RUNTIME_LIVE_MODE must be true or false")
-		}
-	}
-	if cfg.DurableAdmission {
-		gate.SetReady(handlers.PrereqDurableAdmission)
-	}
-	if cfg.LifecycleStoreOpen {
-		gate.SetReady(handlers.PrereqLifecycleStore)
-	}
-	if cfg.ConnectorLedger {
-		gate.SetReady(handlers.PrereqConnectorLedger)
-	}
-	if cfg.ProviderReconciliation {
-		gate.SetReady(handlers.PrereqProviderReconciliation)
-	}
-	if cfg.ReconciliationMonitor {
-		gate.SetReady(handlers.PrereqReconciliationMonitor)
-	}
-	if cfg.BillingReconciliation {
-		gate.SetReady(handlers.PrereqBillingReconciliation)
-	}
-
-	switch os.Getenv("PAID_RUNTIME_ENABLED") {
-	case "":
-		// Kill switch not set — remains off.
-	case "true":
-		gate.SetReady(handlers.PrereqOperatorKillSwitch)
-	case "false":
-		// Explicitly disabled — leave cleared.
-	default:
-		return nil, fmt.Errorf("PAID_RUNTIME_ENABLED must be true or false")
-	}
-	return gate, nil
-}
-
-// paidGateInputs groups the independently verified prerequisites the paid gate
-// checks at startup. Each field corresponds to a PaidGatePrerequisite.
-type paidGateInputs struct {
-	PrepaidRequested       bool
-	BillingStoreOpen       bool
-	BillingLiveMode        bool
-	DurableAdmission       bool
-	LifecycleStoreOpen     bool
-	ConnectorLedger        bool
-	ProviderReconciliation bool
-	ReconciliationMonitor  bool
-	BillingReconciliation  bool
 }
 
 // trackedBackendIDs snapshots the provider IDs of every live burst — the set an
@@ -427,38 +304,10 @@ func main() {
 		)
 	}
 
-	// Billing is a separate, explicitly enabled durability boundary. Runtime
-	// roles only verify the pre-migrated schema/environment and never execute
-	// EnsureSchema or any DDL.
-	var billingStore *billing.Store
-	billingDSN, billingLiveMode, billingEnabled, billingConfigErr := billingConfigFromEnv()
-	if billingConfigErr != nil {
-		log.Error("invalid billing configuration", "error", billingConfigErr)
-		os.Exit(1)
-	}
-	if billingEnabled {
-		billingCtx, billingCancel := context.WithTimeout(context.Background(), 10*time.Second)
-		openedBilling, billingErr := billing.OpenStore(billingCtx, billingDSN, billingLiveMode)
-		billingCancel()
-		if billingErr != nil {
-			log.Error("init billing store", "error", billingErr)
-			os.Exit(1)
-		}
-		billingStore = openedBilling
-		billingStore.SetHoldProtection(store.BillingHoldProtected)
-		defer billingStore.Close()
-		log.Info("billing: postgres backend active", "live_mode", billingLiveMode)
-	}
-	prepaidBurstBilling, prepaidConfigErr := prepaidBurstBillingFromEnv(billingStore != nil)
-	if prepaidConfigErr != nil {
-		log.Error("invalid prepaid burst billing configuration", "error", prepaidConfigErr)
-		os.Exit(1)
-	}
-
 	// LIFECYCLE_DATABASE_URL turns on the authoritative provider-delete state
 	// machine: a reap records durable delete intent and a worker performs the
-	// provider call, the cleanup and the receipts. Like billing, this is a
-	// separate durability boundary with a migration/runtime split — this process
+	// provider call, the cleanup and the receipts. This is a separate
+	// durability boundary with a migration/runtime split — this process
 	// VERIFIES the migrated schema and holds no DDL, so a runtime role cannot
 	// reshape the record that decides whether a paid resource still exists.
 	//
@@ -632,52 +481,21 @@ func main() {
 		log.Info("admission reservations: postgres durable via state store (cross-replica coordination)")
 	}
 
-	// Paid-runtime gate: an explicit, typed interlock that defaults to disabled
-	// and requires every prerequisite independently before paid admission opens.
-	// The gate is nil (paid mode off) when BILLING_ENFORCE_PREPAID_BURSTS is unset.
-	paidGate, paidGateErr := paidRuntimeGateFromEnv(paidGateInputs{
-		PrepaidRequested:       prepaidBurstBilling,
-		BillingStoreOpen:       billingStore != nil,
-		BillingLiveMode:        billingLiveMode,
-		DurableAdmission:       lifecycleEnabled && stateDSN != "",
-		LifecycleStoreOpen:     lifecycleStore != nil,
-		ConnectorLedger:        stateDSN != "",
-		ProviderReconciliation: false,
-		ReconciliationMonitor:  false,
-		BillingReconciliation:  false,
-	})
-	if paidGateErr != nil {
-		log.Error("invalid paid runtime gate configuration", "error", paidGateErr)
-		os.Exit(1)
-	}
-	if paidGate != nil {
-		st, reason, missing := paidGate.Status()
-		log.Info("paid runtime gate", "state", st.String(), "reason", reason, "missing", missing)
-	}
-
-	// Reconciliation interval is read ONCE and used three ways: as the boot
-	// monitor's staleness input, as the periodic ticker's period, and in the
-	// startup log line below. Two reads would let boot and periodic diverge
-	// under an operator who thought they were setting one thing.
+	// Reconciliation interval is read ONCE and used two ways: as the periodic
+	// ticker's period and in the startup log line below. Two reads would let
+	// them diverge under an operator who thought they were setting one thing.
 	reconcileInterval := effectiveReconcileInterval()
-	var reconcileMon *reconcileMonitor
-	if paidGate != nil && lifecycleStore != nil {
-		reconcileMon = newReconcileMonitor(paidGate, reconcileInterval, reconcileAttemptTimeout)
-	}
 
 	wls := &handlers.Workloads{
-		Store:                 store,
-		Commands:              store,
-		Decider:               dec,
-		Reaper:                dec,
-		Log:                   log,
-		Cost:                  costMeter,
-		Teardowns:             teardownBroker,
-		NodeOnlyMaxLifetime:   nodeOnlyMaxLifetime,
-		PlacementTokens:       placementTokens,
-		Billing:               billingStore,
-		EnforcePrepaidBilling: prepaidBurstBilling,
-		PaidGate:              paidGate,
+		Store:               store,
+		Commands:            store,
+		Decider:             dec,
+		Reaper:              dec,
+		Log:                 log,
+		Cost:                costMeter,
+		Teardowns:           teardownBroker,
+		NodeOnlyMaxLifetime: nodeOnlyMaxLifetime,
+		PlacementTokens:     placementTokens,
 	}
 	// Assigned after construction, not in the literal: a typed-nil
 	// *lifecycle.Store in an interface field is non-nil, and that would put the
@@ -765,16 +583,11 @@ func main() {
 
 	// Factory/mesh wiring must precede the operator and optional human-account
 	// handlers: they capture the factory and poller when registered.
-	registerControlPlaneRoutes(mux, store, wls, reconciler, dec, agentAuth, stream, log, billingStore)
+	registerControlPlaneRoutes(mux, store, wls, reconciler, dec, agentAuth, stream, log)
 
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("ok"))
 	})
-	if paidGate != nil {
-		mux.HandleFunc("GET /readyz/paid", handlers.ReadyzPaidHandler(paidGate))
-	} else {
-		mux.HandleFunc("GET /readyz/paid", handlers.ReadyzPaidHandler(handlers.NewPaidGate()))
-	}
 	// Unauthenticated (like /healthz) so the in-cluster Prometheus scrapes it.
 	mux.Handle("GET /metrics", costMeter.Handler())
 
@@ -789,10 +602,6 @@ func main() {
 		// disables the deadline on hijacked connections, but we don't
 		// want the server-level timeout interfering anyway.
 	}
-
-	// Account-route registration above initializes the optional billing clients.
-	// Start their workers only after that registration, on the same signal context.
-	startBillingWorkers(ctx, billingStore, store, paidGate, costMeter, log)
 
 	// Cache GC daemon — evicts stale and expired volumes per the
 	// retention policy. Logs to the shared logger; ignores errors
@@ -840,7 +649,7 @@ func main() {
 			consumer = "central"
 		}
 		worker := &handlers.TeardownWorker{
-			Broker: teardownBroker, Reaper: dec, Store: store, Billing: billingStore,
+			Broker: teardownBroker, Reaper: dec, Store: store,
 			Log: log, Consumer: consumer, Commands: store,
 		}
 		go worker.Run(ctx)
@@ -858,7 +667,6 @@ func main() {
 			Reaper:   dec,
 			Store:    store,
 			Commands: store,
-			Billing:  billingStore,
 			Cost:     costMeter,
 			Log:      log,
 			Wake:     deleteWake,
@@ -868,13 +676,6 @@ func main() {
 
 	go func() {
 		<-ctx.Done()
-		// Close paid admission BEFORE the HTTP server drains: any in-flight
-		// paid request that has not yet reached BeginAdmission is refused,
-		// and one that has holds its read lease until it releases — see
-		// PaidGate.BeginAdmission — so shutdown never races an admission.
-		if paidGate != nil {
-			paidGate.Disable()
-		}
 		shutdown, c := context.WithTimeout(context.Background(), 5*time.Second)
 		defer c()
 		_ = srv.Shutdown(shutdown)
@@ -892,7 +693,6 @@ func main() {
 		}
 		if lifecycleStore != nil {
 			summary, err := dec.ReconcileProviders(reconcileCtx, decider.ProviderReconcileOptions{Log: log})
-			reconcileMon.Observe(summary, err)
 			if err != nil {
 				log.Error("boot provider reconciliation failed closed", "error", err)
 			} else if summary.Observed+summary.Quarantined+summary.Deleted+summary.Failed > 0 {
@@ -932,7 +732,6 @@ func main() {
 					}
 					summary, err := dec.ReconcileProviders(reconcileCtx, decider.ProviderReconcileOptions{Log: log})
 					cancelReconcile()
-					reconcileMon.Observe(summary, err)
 					if err != nil {
 						log.Error("provider reconciliation failed closed", "error", err)
 					} else if summary.Observed+summary.Quarantined+summary.Deleted+summary.Failed > 0 {
@@ -944,13 +743,6 @@ func main() {
 				}
 			}
 		}()
-		// Watchdog runs INDEPENDENTLY of the reconciliation ticker: a hung
-		// provider call cannot advance last-success, so the monitor prereq
-		// closes on time regardless of whether ReconcileProviders ever
-		// returns.
-		if reconcileMon != nil {
-			go reconcileMon.RunWatchdog(ctx, watchdogCadence(reconcileInterval, reconcileAttemptTimeout))
-		}
 	} else {
 		go func() {
 			interval := envDuration("YSCALE_ORPHAN_SWEEP_INTERVAL", 10*time.Minute)

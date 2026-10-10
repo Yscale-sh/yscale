@@ -230,7 +230,7 @@ func TestPostgresWorkloadTransitionsPreserveOtherFields(t *testing.T) {
 	a, p := workloadTransitionFixture(t)
 	b := transitionReplica(t, p)
 	ctx := context.Background()
-	patch := `{"FutureMetadata":{"retained":true},"SpecYAML":"Y3VycmVudA==","Billing":{"ManualAttention":true},"Cost":{"EstimatedUSD":3},"StartedAt":"2026-09-05T01:00:00Z"}`
+	patch := `{"FutureMetadata":{"retained":true},"SpecYAML":"Y3VycmVudA==","Cost":{"EstimatedUSD":3},"StartedAt":"2026-09-05T01:00:00Z"}`
 	if _, err := p.pool.Exec(ctx, `UPDATE workloads SET data=data || $1::jsonb WHERE id='wl_transition'`, patch); err != nil {
 		t.Fatal(err)
 	}

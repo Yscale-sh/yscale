@@ -37,8 +37,6 @@ func TestDefaultRouteCompositionProvisionsTenantFabric(t *testing.T) {
 	t.Setenv("FACTORY_BEARER_TOKEN", "factory-fixture")
 	t.Setenv("YSCALE_ADMIN_TOKEN", "operator-fixture")
 	t.Setenv("YSCALE_ID_INTERNAL_URL", "")
-	t.Setenv("BILLING_CHECKOUT_ENABLED", "false")
-	t.Setenv("BILLING_STRIPE_RECONCILIATION_ENABLED", "false")
 	ctx, cancel := context.WithCancel(context.Background())
 	previousContext, previousFactory, previousPoller := backgroundWorkersContext, enterpriseFactory, enterprisePoller
 	backgroundWorkersContext = ctx
@@ -51,7 +49,7 @@ func TestDefaultRouteCompositionProvisionsTenantFabric(t *testing.T) {
 	reconciler := newPolicyReconciler(store, log)
 	mux := http.NewServeMux()
 	registerControlPlaneRoutes(mux, store, &handlers.Workloads{Store: store, Log: log}, reconciler,
-		decider.New(decider.Config{}), &handlers.AgentAuth{}, nil, log, nil)
+		decider.New(decider.Config{}), &handlers.AgentAuth{}, nil, log)
 	req := httptest.NewRequest(http.MethodPost, "/v1/admin/tenants", strings.NewReader(`{"id":"cust_mesh_order"}`))
 	req.Header.Set("Authorization", "Bearer operator-fixture")
 	w := httptest.NewRecorder()

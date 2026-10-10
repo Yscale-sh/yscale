@@ -648,8 +648,8 @@ func TestQuoteIsSideEffectFreeAndPlanQuotedRefusesShapeDrift(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Quote: %v", err)
 	}
-	if quote.Price.MaximumChargeMicroUSD <= 0 || quote.Price.MaximumDurationSeconds <= 0 {
-		t.Fatalf("quote is unbounded: %+v", quote.Price)
+	if quote.Placement == nil || quote.Placement.Selected.MaximumChargeMicroUSD <= 0 || quote.Placement.Selected.MaximumDurationSeconds <= 0 {
+		t.Fatalf("quote is unbounded: %+v", quote.Placement)
 	}
 	if backend.createCalls != 0 || meshCalls.mint.Load() != 0 || len(d.reservedSlots) != 0 {
 		t.Fatalf("quote side effects: creates=%d mints=%d CIDRs=%d", backend.createCalls, meshCalls.mint.Load(), len(d.reservedSlots))

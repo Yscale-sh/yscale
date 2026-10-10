@@ -198,10 +198,6 @@ func TestPostgresStaleWholeRowPreservesObservations(t *testing.T) {
 	workloadID := "wl_sched4_" + suffix
 	nodeName := "ys-burst-4-" + suffix
 	createdAt := time.Date(2026, 8, 21, 8, 0, 0, 0, time.UTC)
-	billing := &WorkloadBilling{
-		HoldID: 44, WorkloadRef: workloadID, QuoteID: "quote-sched4",
-		PricingVersion: 7, ReservedMicroUSD: 1250000, Currency: "USD",
-	}
 	writer.AddCustomer(&Customer{ID: customerID, Token: "tok_" + suffix, Plan: "pro"})
 	if err := writer.PutBurst(&Burst{
 		ID: burstID, CustomerID: customerID, ClusterID: "cluster-a",
@@ -212,7 +208,7 @@ func TestPostgresStaleWholeRowPreservesObservations(t *testing.T) {
 	}
 	writer.PutWorkload(&Workload{
 		ID: workloadID, CustomerID: customerID, ClusterID: "cluster-a",
-		BurstID: burstID, Status: "provisioning", CreatedAt: createdAt, Billing: billing,
+		BurstID: burstID, Status: "provisioning", CreatedAt: createdAt,
 	})
 
 	// Open another replica and take its copy before any targeted observation
@@ -261,9 +257,6 @@ func TestPostgresStaleWholeRowPreservesObservations(t *testing.T) {
 	if recorded, err := writer.RecordWorkloadCostForBurst(ctx, cost); err != nil || !recorded {
 		t.Fatalf("RecordWorkloadCostForBurst: recorded=%v err=%v", recorded, err)
 	}
-	if marked, err := writer.MarkWorkloadBillingManualAttention(ctx, customerID, workloadID, billing.HoldID); err != nil || !marked {
-		t.Fatalf("MarkWorkloadBillingManualAttention: marked=%v err=%v", marked, err)
-	}
 
 	staleReplica.PutWorkload(staleW)
 
@@ -303,13 +296,6 @@ func TestPostgresStaleWholeRowPreservesObservations(t *testing.T) {
 		w.Cost.Runtime != cost.Runtime || !w.Cost.FrozenAt.Equal(cost.FrozenAt) ||
 		w.Cost.Backend != cost.Backend || w.Cost.BurstID != cost.BurstID || w.Cost.Basis != cost.Basis {
 		t.Fatalf("Cost changed by stale whole-row write: %+v", w.Cost)
-	}
-	if w.Billing == nil || w.Billing.HoldID != billing.HoldID ||
-		w.Billing.WorkloadRef != billing.WorkloadRef || w.Billing.QuoteID != billing.QuoteID ||
-		w.Billing.PricingVersion != billing.PricingVersion ||
-		w.Billing.ReservedMicroUSD != billing.ReservedMicroUSD || w.Billing.Currency != billing.Currency ||
-		!w.Billing.ManualAttention {
-		t.Fatalf("Billing association changed by stale whole-row write: %+v", w.Billing)
 	}
 }
 

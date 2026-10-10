@@ -10,7 +10,6 @@ import {
   fetchWorkloadLogs,
   fetchWorkloads,
   previewPlacement,
-  normalizeWorkloadBilling,
   retryWorkload,
 } from "./workloadApi.js";
 
@@ -35,16 +34,6 @@ function jsonResponse(status, body) {
 
 const YAML = "kind: Workload\nmetadata:\n  name: \"trainer\"\n";
 const KEY = "wl_9f2c1a7b4e6d80315c2a9b7e4f1d6038"; // gitleaks:allow -- deterministic test fixture
-
-test("workload billing accepts the backend-real numeric receipt contract", () => {
-  const safe = { hold_id: 41, state: "pending", reserved_micro_usd: 2500000, captured_micro_usd: 0, currency: "USD", quote_id: "quote_1", pricing_version: 3 };
-  assert.deepEqual(normalizeWorkloadBilling(safe), { holdId: 41, state: "pending", reservedMicroUsd: 2500000, capturedMicroUsd: 0, currency: "USD", quoteId: "quote_1", pricingVersion: 3 });
-  assert.throws(() => normalizeWorkloadBilling({ ...safe, provider: "leak" }), ApiError);
-  assert.throws(() => normalizeWorkloadBilling({ ...safe, reserved_micro_usd: 1.5 }), ApiError);
-  assert.throws(() => normalizeWorkloadBilling({ ...safe, hold_id: "41" }), ApiError);
-  assert.throws(() => normalizeWorkloadBilling({ ...safe, state: "held" }), ApiError);
-  assert.throws(() => normalizeWorkloadBilling({ ...safe, pricing_version: "3" }), ApiError);
-});
 
 test("a create carries the caller's key verbatim with the YAML", async () => {
   const stub = stubFetch(() => jsonResponse(202, { id: "wl_1" }));

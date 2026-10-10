@@ -239,7 +239,7 @@ test("limits render what the tenant summary reported, and zero means no ceiling"
 });
 
 // Everything here except the exact string is a shape a human can produce by
-// hand, so anything but an exact match would credit a controller for a
+// hand, so anything but an exact match would attribute to a controller a
 // submission nobody's controller made.
 test("only an exact pending-pod origin counts as controller-triggered", () => {
   assert.equal(PENDING_POD_ORIGIN, "pending-pod");

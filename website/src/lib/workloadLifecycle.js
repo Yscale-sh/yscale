@@ -147,7 +147,7 @@ export function deriveCleanupPresentation(workload) {
       providerAbsentConfirmed = false;
       providerAbsentText = "unproven";
       tone = "danger";
-      message = "Automatic teardown retries have stopped. Review the provider account to confirm whether capacity has been removed, and contact support if billing continues.";
+      message = "Automatic teardown retries have stopped. Review the provider account to confirm whether capacity has been removed, and contact your provider if cloud costs continue.";
       break;
     case "terminated":
       stateLabel = "terminated";

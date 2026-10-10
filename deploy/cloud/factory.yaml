@@ -42,7 +42,7 @@ spec:
     spec:
       containers:
         - name: yscale-factory
-          image: ghcr.io/yscale-sh/yscale-factory:v0.0.1-preview
+          image: ghcr.io/yscale-sh/yscale-factory:v0.0.2-preview
           imagePullPolicy: Always
           ports:
             - { name: fabric, containerPort: 8080, protocol: TCP } # central-facing (bearer)

@@ -14,20 +14,18 @@ import (
 // back to it.
 type workloadPersister struct {
 	auditRecorder
-	mu           sync.Mutex
-	rows         map[string]*Workload // burst id → the durable workload row
-	reaps        map[string]string
-	lookupErr    error
-	upsertErr    error
-	costErr      error
-	costCtxErr   error
-	attentionErr error
+	mu         sync.Mutex
+	rows       map[string]*Workload // burst id → the durable workload row
+	reaps      map[string]string
+	lookupErr  error
+	upsertErr  error
+	costErr    error
+	costCtxErr error
 
 	upserts []*Workload
 	// costWrites counts recordWorkloadCost calls that reached the row, so a test
 	// can tell "the guard refused it" from "nobody asked".
-	costWrites      int
-	attentionWrites int
+	costWrites int
 }
 
 func (p *workloadPersister) upsertCustomer(*Customer) error                        { return nil }
@@ -124,7 +122,6 @@ func (p *workloadPersister) upsertWorkload(w *Workload) error {
 	row := cp
 	if stored, ok := p.rows[w.BurstID]; ok {
 		preserveWorkloadTransition(&row, stored)
-		preserveWorkloadBillingManualAttention(&row, stored)
 		if row.Cost == nil && stored.Cost != nil {
 			observed := *stored.Cost
 			row.Cost = &observed
@@ -158,29 +155,6 @@ func (p *workloadPersister) recordWorkloadCost(ctx context.Context, burstID stri
 	w.Cost = &observed
 	p.costWrites++
 	return true, nil
-}
-
-func (p *workloadPersister) markWorkloadBillingManualAttention(
-	_ context.Context,
-	customerID string,
-	workloadRef string,
-	holdID int64,
-) (bool, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if p.attentionErr != nil {
-		return false, p.attentionErr
-	}
-	for _, workload := range p.rows {
-		if workload.ID != workloadRef || workload.CustomerID != customerID || workload.Billing == nil ||
-			workload.Billing.WorkloadRef != workloadRef || workload.Billing.HoldID != holdID {
-			continue
-		}
-		workload.Billing.ManualAttention = true
-		p.attentionWrites++
-		return true, nil
-	}
-	return false, nil
 }
 
 func (p *workloadPersister) recordBurstReapReceipt(_ context.Context, burstID, customerID string) (bool, error) {

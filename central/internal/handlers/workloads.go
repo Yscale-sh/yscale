@@ -17,7 +17,6 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/yscale-sh/yscale/central/internal/billing"
 	"github.com/yscale-sh/yscale/central/internal/cost"
 	"github.com/yscale-sh/yscale/central/internal/lifecycle"
 	"github.com/yscale-sh/yscale/central/internal/state"
@@ -43,15 +42,6 @@ type Workloads struct {
 	// (the TeardownWorker in teardown.go). nil = tear down inline in-process
 	// (the single-binary / OSS-local path).
 	Teardowns broker.Broker
-	// Billing enforcement is an explicit production opt-in. When enabled,
-	// Billing and the quoted-decider seam are both required and failures close
-	// admission before a provider create.
-	Billing               BurstBilling
-	EnforcePrepaidBilling bool
-	// PaidGate, when non-nil, is the runtime interlock for paid admission.
-	// The handler re-checks it immediately before the first billing/provider
-	// side effect; a gate closure between quote and reservation yields a 503.
-	PaidGate *PaidGate
 
 	// Deletes, when set, makes the durable provider-delete state machine
 	// authoritative for every reap: reapBurst records intent and a
@@ -196,20 +186,11 @@ type BurstQuote struct {
 	Region         string
 	SKU            string
 	HourlyUSD      float64
-	Price          billing.PriceQuote
 	// Placement is the normalized decision this quote priced: the same typed
 	// receipt a preview shows and a launch binds itself to. nil from a decider
 	// that produces none, which keeps every existing quoting implementation
 	// valid and simply means no digest can be bound.
 	Placement *state.PlacementReceipt
-}
-
-type BurstBilling interface {
-	EnsureAccount(context.Context, string) error
-	ReserveCredit(context.Context, billing.ReservationRequest) (billing.Hold, error)
-	ReleaseHold(context.Context, string, int64, string, string) error
-	CaptureHold(context.Context, string, int64, int64, string, string) error
-	GetHold(context.Context, string, int64) (billing.Hold, error)
 }
 
 // PlanOptions carries everything Plan needs from the calling agent /
@@ -1026,7 +1007,6 @@ func (h *Workloads) Create(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, status, CreateWorkloadResponse{Status: "rejected", Message: msg})
 		return
 	}
-	_, hostedCluster := h.Store.HostedNamespaceForCluster(cust.ID, agent.ClusterID)
 	if namespace, hosted := h.Store.HostedNamespaceForCluster(cust.ID, agent.ClusterID); hosted && wl.Metadata.Namespace != namespace {
 		sub.release(r.Context())
 		writeJSON(w, http.StatusConflict, CreateWorkloadResponse{
@@ -1100,7 +1080,7 @@ func (h *Workloads) Create(w http.ResponseWriter, r *http.Request) {
 
 	// A submission may present the placement it was previewed under. Verified
 	// HERE — after the spec is final and the cluster is chosen, and before the
-	// admission reservation, the billing hold, the mesh key, the /24 and the
+	// admission reservation, the mesh key, the /24 and the
 	// provider call — because a credential that does not authenticate, and a
 	// decision that moved, must both be answered while nothing has been spent.
 	verified, refusalStatus, refusal, ok := h.verifyPlacementToken(r, &wl, planOpts)
@@ -1118,36 +1098,8 @@ func (h *Workloads) Create(w http.ResponseWriter, r *http.Request) {
 	var quote *BurstQuote
 	var quoted QuotedDecider
 	tenantHasLimits := cust.MaxConcurrentBursts > 0 || cust.MaxHourlyUSD > 0
-	needsPrepaidBilling := h.EnforcePrepaidBilling && !hostedCluster
 
-	if needsPrepaidBilling {
-		if h.Billing == nil {
-			sub.release(r.Context())
-			writeJSON(w, http.StatusServiceUnavailable, CreateWorkloadResponse{Status: "rejected", Message: "prepaid billing is unavailable"})
-			return
-		}
-		var ok bool
-		quoted, ok = h.Decider.(QuotedDecider)
-		if !ok {
-			sub.release(r.Context())
-			writeJSON(w, http.StatusServiceUnavailable, CreateWorkloadResponse{Status: "rejected", Message: "trusted provider quoting is unavailable"})
-			return
-		}
-		// The quote the digest check already computed IS this launch's quote when
-		// one was presented. Quoting a second time would leave the verified
-		// decision behind and price the burst from a third one, which is the gap
-		// the digest exists to close.
-		quote = verified
-		if quote == nil {
-			var quoteErr error
-			quote, quoteErr = quoted.Quote(r.Context(), &wl, planOpts)
-			if quoteErr != nil {
-				sub.release(r.Context())
-				writeJSON(w, http.StatusServiceUnavailable, CreateWorkloadResponse{Status: "rejected", Message: "provider quote unavailable"})
-				return
-			}
-		}
-	} else if quoter, isQuoter := h.Decider.(QuotedDecider); isQuoter {
+	if quoter, isQuoter := h.Decider.(QuotedDecider); isQuoter {
 		quoted = quoter
 		quote = verified
 		if quote == nil && cust.MaxHourlyUSD > 0 {
@@ -1164,7 +1116,7 @@ func (h *Workloads) Create(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusServiceUnavailable, CreateWorkloadResponse{Status: "rejected", Message: "trusted provider quoting is unavailable for admission rate check"})
 		return
 	}
-	if (needsPrepaidBilling || cust.MaxHourlyUSD > 0) && quote == nil {
+	if cust.MaxHourlyUSD > 0 && quote == nil {
 		sub.release(r.Context())
 		writeJSON(w, http.StatusServiceUnavailable, CreateWorkloadResponse{Status: "rejected", Message: "trusted provider quote unavailable for admission rate check"})
 		return
@@ -1193,102 +1145,8 @@ func (h *Workloads) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var billingAssoc *state.WorkloadBilling
-	var billingHold billing.Hold
-	var billingMaxDuration time.Duration
 	var plan *Plan
-	needsPlatformFundedGate := needsPrepaidBilling && quote != nil && quote.CloudAccountID == ""
-	if needsPrepaidBilling {
-		if needsPlatformFundedGate {
-			// Fast-fail before any billing side effect, using the SAME
-			// linearizing BeginAdmission call the load-bearing lease around
-			// PlanQuoted uses below. Allowed() releases its RLock immediately
-			// and can lull a caller into thinking it locked in the decision;
-			// BeginAdmission always returns a lease, so this call site cannot
-			// silently drift into a shorter-lived check.
-			var releaseEarly func()
-			var earlyOpen bool
-			if h.PaidGate != nil {
-				releaseEarly, earlyOpen = h.PaidGate.BeginAdmission()
-			}
-			if !earlyOpen {
-				adm.release(r.Context(), rsvID)
-				sub.release(r.Context())
-				writeJSON(w, http.StatusServiceUnavailable, CreateWorkloadResponse{Status: "rejected", Code: "paid_runtime_not_ready", Message: "paid runtime is not ready"})
-				return
-			}
-			releaseEarly()
-		}
-		if quote.CloudAccountID == "" {
-			if err := h.Billing.EnsureAccount(r.Context(), cust.ID); err != nil {
-				adm.release(r.Context(), rsvID)
-				sub.release(r.Context())
-				writeJSON(w, http.StatusServiceUnavailable, CreateWorkloadResponse{Status: "rejected", Message: "prepaid billing is unavailable"})
-				return
-			}
-			billingHold, err = h.Billing.ReserveCredit(r.Context(), billing.ReservationRequest{
-				CustomerID: cust.ID, WorkloadRef: wlID, IdempotencyKey: "burst-reserve:" + wlID,
-				ExpiresAt:  quote.Price.IssuedAt.Add(time.Duration(quote.Price.MaximumDurationSeconds)*time.Second + 7*24*time.Hour),
-				PriceQuote: quote.Price,
-			})
-			if err != nil {
-				adm.release(r.Context(), rsvID)
-				sub.release(r.Context())
-				status := http.StatusServiceUnavailable
-				message := "prepaid billing is unavailable"
-				if errors.Is(err, billing.ErrInsufficientCredit) || errors.Is(err, billing.ErrAccountFrozen) {
-					status, message = http.StatusPaymentRequired, "insufficient prepaid credit"
-				}
-				writeJSON(w, status, CreateWorkloadResponse{Status: "rejected", Message: message})
-				return
-			}
-			// This read lease is the load-bearing side-effect boundary: the
-			// interlock may have closed while ReserveCredit was in flight, and a
-			// closure cannot complete while the provider call is in flight.
-			endPaidAdmission, gateOpen := h.PaidGate.BeginAdmission()
-			if !gateOpen {
-				releaseCtx, releaseCancel := context.WithTimeout(context.Background(), 5*time.Second)
-				releaseErr := h.Billing.ReleaseHold(releaseCtx, cust.ID, billingHold.ID, "burst-release:"+wlID, "gate_closed_after_reserve")
-				releaseCancel()
-				billingAssoc = &state.WorkloadBilling{HoldID: billingHold.ID, WorkloadRef: wlID, QuoteID: quote.Price.QuoteID,
-					PricingVersion: quote.Price.PricingVersion, ReservedMicroUSD: billingHold.AmountMicroUSD, Currency: quote.Price.Currency,
-					AuthoritativeUsageRequired: true}
-				if releaseErr != nil {
-					h.Log.Error("release failed after paid runtime gate closed", "customer", cust.ID, "workload", wlID, "error", releaseErr)
-					billingAssoc.ManualAttention = true
-					finishedAt := time.Now().UTC()
-					if persistErr := h.Store.PutWorkloadDurable(&state.Workload{
-						ID: wlID, CustomerID: cust.ID, AgentID: agent.ID, ClusterID: agent.ClusterID,
-						Status: "failed", CreatedAt: finishedAt, FinishedAt: &finishedAt, SpecYAML: specYAML,
-						SubmittedBy: &by.Actor, Billing: billingAssoc,
-					}); persistErr != nil {
-						h.Log.Error("persist failed paid-gate hold release obligation", "customer", cust.ID, "workload", wlID, "error", persistErr)
-					}
-				}
-				adm.release(r.Context(), rsvID)
-				resp := CreateWorkloadResponse{ID: wlID, Status: "rejected", Code: "paid_runtime_not_ready", Message: "paid runtime is not ready"}
-				if releaseErr != nil {
-					// Complete, rather than release, the claim: a retry under this key
-					// must not reserve another hold while the durable obligation is open.
-					sub.answer(r.Context(), w, http.StatusServiceUnavailable, resp)
-				} else {
-					sub.release(r.Context())
-					writeJSON(w, http.StatusServiceUnavailable, resp)
-				}
-				return
-			}
-			billingAssoc = &state.WorkloadBilling{HoldID: billingHold.ID, WorkloadRef: wlID, QuoteID: quote.Price.QuoteID,
-				PricingVersion: quote.Price.PricingVersion, ReservedMicroUSD: billingHold.AmountMicroUSD, Currency: quote.Price.Currency,
-				AuthoritativeUsageRequired: true}
-			billingMaxDuration = time.Duration(quote.Price.MaximumDurationSeconds) * time.Second
-			plan, err = func() (*Plan, error) {
-				defer endPaidAdmission()
-				return quoted.PlanQuoted(r.Context(), &wl, planOpts, quote)
-			}()
-		} else {
-			plan, err = quoted.PlanQuoted(r.Context(), &wl, planOpts, quote)
-		}
-	} else if quoted != nil && quote != nil {
+	if quoted != nil && quote != nil {
 		// A quote obtained for admission — pass it to PlanQuoted so Plan
 		// does not quote again.
 		plan, err = quoted.PlanQuoted(r.Context(), &wl, planOpts, quote)
@@ -1300,36 +1158,6 @@ func (h *Workloads) Create(w http.ResponseWriter, r *http.Request) {
 		ambiguousCreate := quoted != nil && quoted.CreateOutcomeAmbiguous(err)
 		if !ambiguousCreate {
 			adm.release(r.Context(), rsvID)
-		}
-		if billingAssoc != nil && !ambiguousCreate {
-			compCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			releaseErr := h.Billing.ReleaseHold(compCtx, cust.ID, billingHold.ID, "burst-release:"+wlID, "provider_create_failed")
-			cancel()
-			if releaseErr != nil {
-				h.Log.Error("release failed provider-create hold", "customer", cust.ID, "workload", wlID, "error", releaseErr)
-				billingAssoc.ManualAttention = true
-				finishedAt := time.Now().UTC()
-				if persistErr := h.Store.PutWorkloadDurable(&state.Workload{
-					ID: wlID, CustomerID: cust.ID, AgentID: agent.ID, ClusterID: agent.ClusterID,
-					Status: "failed", CreatedAt: finishedAt, FinishedAt: &finishedAt, SpecYAML: specYAML,
-					SubmittedBy: &by.Actor, Billing: billingAssoc,
-				}); persistErr != nil {
-					h.Log.Error("persist failed provider-create hold release obligation", "customer", cust.ID, "workload", wlID, "error", persistErr)
-				}
-			}
-		}
-		if ambiguousCreate && billingAssoc != nil {
-			billingAssoc.ManualAttention = true
-			// The provider may have accepted the create, so retain both the hold
-			// and a tenant-bound durable association for operator reconciliation.
-			finishedAt := time.Now().UTC()
-			if persistErr := h.Store.PutWorkloadDurable(&state.Workload{
-				ID: wlID, CustomerID: cust.ID, AgentID: agent.ID, ClusterID: agent.ClusterID,
-				Status: "failed", CreatedAt: finishedAt, FinishedAt: &finishedAt, SpecYAML: specYAML,
-				SubmittedBy: &by.Actor, Billing: billingAssoc,
-			}); persistErr != nil {
-				h.Log.Error("persist ambiguous provider-create billing association", "customer", cust.ID, "workload", wlID, "error", persistErr)
-			}
 		}
 		if isFabricProvisioning(err) {
 			// The onboarding sentinel is raised before the decider reaches a
@@ -1357,12 +1185,6 @@ func (h *Workloads) Create(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	if billingAssoc != nil && billingMaxDuration > 0 && (plan.Deadline <= 0 || plan.Deadline > billingMaxDuration) {
-		// The watchdog enforces the exact duration whose maximum charge was
-		// reserved. A platform-funded burst cannot silently outlive its hold.
-		plan.Deadline = billingMaxDuration
-	}
-
 	// The workload record, built ONCE here and used by both outcomes below.
 	//
 	// It is the same struct either way: the same id, the same immutable submitter
@@ -1394,7 +1216,6 @@ func (h *Workloads) Create(w http.ResponseWriter, r *http.Request) {
 		RetryOfWorkloadID: retryOfWorkload(r.Context()),
 		TemplateRef:       templateRef,
 		SubmissionOrigin:  origin,
-		Billing:           billingAssoc,
 	}
 
 	// failAttempt records the attempt and returns the retryable response. The
@@ -1461,7 +1282,6 @@ func (h *Workloads) Create(w http.ResponseWriter, r *http.Request) {
 		Status:          "provisioning",
 		SKU:             plan.SKU,
 		HourlyUSD:       plan.HourlyUSD,
-		Billing:         billingAssoc,
 		Deadline:        plan.Deadline,
 		MaxUSD:          plan.MaxUSD,
 		NodeOnly:        wl.Spec.NodeOnly,
@@ -1518,9 +1338,9 @@ func (h *Workloads) Create(w http.ResponseWriter, r *http.Request) {
 		PlacementMode:      placement.mode,
 		BurstID:            plan.BurstID,
 	}
-	// The journal references the placement by the SAME identity the receipt and
-	// the billing quote use, rather than restating the decision: one digest, one
-	// decision, three readers.
+	// The journal references the placement by the SAME identity the receipt
+	// uses, rather than restating the decision: one digest, one decision, two
+	// readers.
 	if plan.Placement != nil {
 		detail.PlacementDigest = plan.Placement.Digest
 	}
@@ -1705,21 +1525,7 @@ func (h *Workloads) compensateProvisionedBurst(ctx context.Context, b *state.Bur
 					"burst", b.ID, "node", b.NodeName, "reason", reason, "error", err)
 			}
 			if leaseReleased {
-				observed := workloadCostForBurst(b, time.Now().UTC())
-				if b.TerminalCost != nil {
-					observed = *b.TerminalCost
-				} else {
-					b.TerminalCost = &observed
-				}
-				settleCtx, settleCancel := context.WithTimeout(context.Background(), 5*time.Second)
-				settleErr := settleBurstBilling(settleCtx, h.Billing, b, &observed)
-				settleCancel()
-				if settleErr != nil {
-					h.Log.Error("inline provisioning compensation deleted provider node but prepaid settlement failed; persisting ordinary retry",
-						"burst", b.ID, "customer", b.CustomerID, "reason", reason, "error", settleErr)
-				} else {
-					cleaned = true
-				}
+				cleaned = true
 			}
 		}
 	}
@@ -1800,9 +1606,6 @@ func (h *Workloads) Get(w http.ResponseWriter, r *http.Request) {
 	}
 	if wl.Outcome != nil {
 		resp["outcome"] = storedOutcomeResponse(wl.Outcome)
-	}
-	if receipt := workloadBillingReceipt(r.Context(), h.Billing, wl); receipt != nil {
-		resp["billing"] = receipt
 	}
 	if h.Commands != nil {
 		commands, commandErr := h.Commands.ListConnectorCommandsForWorkload(r.Context(), cust.ID, wl.ID)
@@ -2485,8 +2288,8 @@ func (h *Workloads) reapBurst(ctx context.Context, burstID, reason string) ReapO
 // Three things are deliberately absent compared to the inline path. It does not
 // claim the burst away — the live record is what keeps the burst counted, swept
 // and billed, and retiring it before the provider call is what turns an
-// unreachable cloud API into an untracked paid node. It does not accrue cost or
-// settle billing, because nothing is over yet. And it does not publish to the
+// unreachable cloud API into an untracked paid node. It does not accrue cost,
+// because nothing is over yet. And it does not publish to the
 // broker as if a queue handoff were a teardown; the wake-up below is a cache in
 // front of the durable row, and losing every one of them changes only latency.
 func (h *Workloads) reapBurstViaLifecycle(ctx context.Context, burstID, reason string) ReapOutcome {
@@ -2653,20 +2456,6 @@ func (h *Workloads) reapBurstInline(ctx context.Context, burstID, reason string)
 		}
 		h.Cost.RecordReap("fail")
 		return ReapOutcomeReceiptPending
-	}
-	if b.Billing != nil {
-		if settleErr := settleBurstBilling(ctx, h.Billing, b, &observed); settleErr != nil {
-			h.Log.Error("burst provider reaped but prepaid settlement failed; re-queued to retry settlement",
-				"burst", b.ID, "customer", b.CustomerID, "reason", reason, "error", settleErr)
-			b.TerminalCost = &observed
-			markReapPending(b, reason)
-			if perr := h.Store.PutBurst(b); perr != nil {
-				h.Log.Error("settlement retry burst not persisted; settlement needs manual repair",
-					"burst", b.ID, "reason", reason, "error", perr)
-			}
-			h.Cost.RecordReap("fail")
-			return ReapOutcomeReceiptPending
-		}
 	}
 	h.accrueObservedCost(ctx, b, observed)
 	h.Cost.RecordReap("ok")

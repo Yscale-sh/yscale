@@ -146,7 +146,7 @@ export function DetailList({ rows }) {
   );
 }
 
-// A statement of fact about what this console can and cannot do. Every page
+// A description about what this console can and cannot do. Every page
 // that shows derived or partial data carries one, so the limit travels with the
 // numbers instead of living in a footnote nobody reads.
 export function Note({ children, tone = "plain" }) {

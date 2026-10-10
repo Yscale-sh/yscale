@@ -83,21 +83,16 @@ func TestWorkloadCancellationMemoryAndFailures(t *testing.T) {
 
 func TestPendingBurstPreservesSettlementAndCleanup(t *testing.T) {
 	stored := &Burst{ID: "burst", CustomerID: "tenant", BackendID: "synthetic", ReapPending: true, ReapPendingStatus: "cancelled", CreatedAt: time.Now().UTC(), HourlyUSD: 1.25,
-		NodeName: "original-node", TSHostname: "original-mesh", PodCIDR: "10.244.1.0/24", Billing: &WorkloadBilling{HoldID: 1, WorkloadRef: "original", ManualAttention: true}, TerminalCost: &WorkloadCost{}}
+		NodeName: "original-node", TSHostname: "original-mesh", PodCIDR: "10.244.1.0/24", TerminalCost: &WorkloadCost{}}
 	stale := cloneBurstSnapshot(stored)
 	stale.ReapPending, stale.ReapPendingStatus = false, ""
 	stale.CreatedAt, stale.HourlyUSD = time.Now().Add(time.Hour), 99
-	stale.Billing, stale.TerminalCost = nil, nil
+	stale.TerminalCost = nil
 	stale.NodeName, stale.TSHostname, stale.PodCIDR = "wrong-node", "wrong-mesh", "wrong-pod-cidr"
 	if err := preservePendingBurst(stale, stored, nil); err != nil {
 		t.Fatal(err)
 	}
-	if !stale.ReapPending || stale.ReapPendingStatus != "cancelled" || !stale.CreatedAt.Equal(stored.CreatedAt) || stale.HourlyUSD != stored.HourlyUSD || stale.Billing == nil || *stale.Billing != *stored.Billing || stale.TerminalCost == nil || stale.NodeName != stored.NodeName || stale.TSHostname != stored.TSHostname || stale.PodCIDR != stored.PodCIDR {
+	if !stale.ReapPending || stale.ReapPendingStatus != "cancelled" || !stale.CreatedAt.Equal(stored.CreatedAt) || stale.HourlyUSD != stored.HourlyUSD || stale.TerminalCost == nil || stale.NodeName != stored.NodeName || stale.TSHostname != stored.TSHostname || stale.PodCIDR != stored.PodCIDR {
 		t.Fatal("pending cleanup or settlement identity was overwritten")
-	}
-	stored.Billing.ManualAttention = false
-	stale.Billing.ManualAttention = true
-	if err := preservePendingBurst(stale, stored, nil); err != nil || !stale.Billing.ManualAttention {
-		t.Fatalf("new billing manual-attention flag was lost: %v", err)
 	}
 }

@@ -10,8 +10,6 @@ import {
   fetchHostedRequests,
   fetchHostedClusters,
   fetchOperatorTenants,
-  createServiceCreditKey,
-  grantServiceCredit,
   hostedUninstallCommand,
   normalizeHostedAssignment,
   normalizeHostedDelete,
@@ -27,23 +25,7 @@ import {
   tenantLimitDraft,
   tenantLimitValues,
   updateOperatorTenantLimits,
-  usdToMicroUSD,
 } from "./operatorApi.js";
-
-test("service credit converts USD exactly and posts only the bounded grant body", async () => {
-  assert.deepEqual(usdToMicroUSD("12.345678"), { value: 12345678, error: "" });
-  assert.equal(usdToMicroUSD("0").value, null);
-  assert.equal(usdToMicroUSD("1.0000001").value, null);
-  assert.match(createServiceCreditKey(), /^svc-credit-/);
-  const stub = stubFetch(async () => jsonResponse(200, { tenant_id: "tenant-a", amount_micro_usd: 1250000, currency: "USD", idempotency_key: "svc-credit-test", granted: true }));
-  try {
-    const result = await grantServiceCredit({ token: "token", tenantId: "tenant-a", amountMicroUsd: 1250000, idempotencyKey: "svc-credit-test" });
-    assert.equal(result.amountMicroUsd, 1250000);
-    assert.equal(stub.calls[0].url, "/api/operator/tenants/tenant-a/billing/service-credits");
-    assert.deepEqual(JSON.parse(stub.calls[0].init.body), { amount_micro_usd: 1250000, idempotency_key: "svc-credit-test" });
-    assert.equal(stub.calls[0].init.credentials, "same-origin");
-  } finally { stub.restore(); }
-});
 
 function jsonResponse(status, body) {
   return { ok: status >= 200 && status < 300, status, json: async () => body };

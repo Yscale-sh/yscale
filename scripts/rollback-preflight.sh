@@ -4,7 +4,7 @@
 # What this is: the check you run BEFORE reverting the pin commit in the
 # infrastructure repository (onprem/yscale Flux manifests). It reports what the
 # cluster currently runs, whether the proposed rollback target is digest-pinned,
-# and whether the live-mode flags are where a rollback must leave them.
+# and whether the workloads are healthy enough to roll back from.
 #
 # What this is NOT: a rollback. This script performs no mutation of any kind.
 # It runs `kubectl get`/`version` (and, if present, `flux get`) only. There is
@@ -249,45 +249,6 @@ if STRATEGY="$(kube deploy "$CLOUD_DEPLOY" -n "$NAMESPACE" \
   fi
 else
   fail "could not read the cloud deployment update strategy"
-fi
-
-# ---------- 5. live-mode expectations ----------
-# A rollback must not flip a paid/billing flag. These must read false BEFORE the
-# revert and must still read false after it. A value that is not inline on the
-# PodSpec (sourced from a Secret or ConfigMap) is NOT verified here — that is a
-# FAIL, because "I could not see it" is not "it is false".
-deploy_env() {
-  kube deploy "$CLOUD_DEPLOY" -n "$NAMESPACE" \
-    -o jsonpath='{range .spec.template.spec.containers[*]}{range .env[*]}{.name}={.value}{"\n"}{end}{end}' 2>/dev/null
-}
-
-ENV_DUMP=""
-if ! ENV_DUMP="$(deploy_env)"; then
-  fail "could not read the cloud deployment PodSpec env"
-  ENV_DUMP=""
-fi
-
-expect_env_false() {
-  local key="$1" line=""
-  line="$(printf '%s\n' "$ENV_DUMP" | grep -E "^${key}=" || true)"
-  if [ -z "$line" ]; then
-    fail "$key is not an inline PodSpec env value — cannot verify it is false from the cluster read"
-    return
-  fi
-  if [ "$line" = "${key}=false" ]; then
-    pass "$key=false"
-  else
-    fail "$key is not false ($line): a rollback must not run with a live-mode flag set"
-  fi
-}
-expect_env_false BILLING_LIVE_MODE
-expect_env_false PAID_RUNTIME_LIVE_MODE
-
-PAID_ENABLED="$(printf '%s\n' "$ENV_DUMP" | grep -E '^PAID_RUNTIME_ENABLED=' || true)"
-if [ -n "$PAID_ENABLED" ]; then
-  info "observed $PAID_ENABLED (the runtime gate's own enable switch; this preflight does not change it)"
-else
-  info "PAID_RUNTIME_ENABLED not inline on the PodSpec; not verified and not changed"
 fi
 
 # ---------- verdict ----------

@@ -28,7 +28,7 @@ type: application
 # summary is read back from. Without it the export still runs, but every
 # receipt loses its object and byte counts.
 version: 0.2.4
-appVersion: "v0.0.1-preview"
+appVersion: "v0.0.2-preview"
 keywords:
   - yscale
   - kubernetes

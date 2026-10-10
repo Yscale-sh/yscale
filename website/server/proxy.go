@@ -42,8 +42,6 @@ const (
 	maxCloudAccountJSONBytes    = 8 << 10   // write-only Linode credential plus bounded image ids
 	maxRuntimeBindingJSONBytes  = 64 << 10  // largest value plus worst-case JSON escaping, still bounded
 	maxRuntimeBindingsRespBytes = 64 << 10  // at most 32 summary rows, never secret material
-	maxServiceCreditJSONBytes   = 1 << 10   // two small scalar fields only
-	maxBillingRespBytes         = 128 << 10 // bounded summary plus at most 100 active holds
 	maxUpstreamBytes            = 256 << 10 // upstream response cap
 	// Log output is capped to 256 KiB before JSON encoding. Escaping control
 	// bytes can expand the wire body, so this route earns a larger relay cap.
@@ -100,7 +98,6 @@ var templateVersionRe = regexp.MustCompile(`^[1-9][0-9]{0,8}$`)
 var (
 	runtimeBindingKeyRe      = regexp.MustCompile(`^[A-Z_][A-Z0-9_]{0,62}$`)
 	runtimeBindingRevisionRe = regexp.MustCompile(`^(0|[1-9][0-9]{0,18})$`)
-	serviceCreditKeyRe       = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$`)
 )
 
 var memberRoles = map[string]bool{
@@ -129,22 +126,6 @@ type linodeCloudAccountReq struct {
 type runtimeBindingReq struct {
 	Name  string `json:"name"`
 	Value string `json:"value"`
-}
-
-type serviceCreditReq struct {
-	AmountMicroUSD int64  `json:"amount_micro_usd"`
-	IdempotencyKey string `json:"idempotency_key"`
-}
-
-func (o *serviceCreditReq) UnmarshalJSON(data []byte) error {
-	fields, err := decodeExactJSONObject(data)
-	if err != nil || len(fields) != 2 || fields["amount_micro_usd"] == nil || fields["idempotency_key"] == nil {
-		return errors.New("service credit body must contain only amount_micro_usd and idempotency_key")
-	}
-	if json.Unmarshal(fields["amount_micro_usd"], &o.AmountMicroUSD) != nil || json.Unmarshal(fields["idempotency_key"], &o.IdempotencyKey) != nil {
-		return errors.New("invalid service credit fields")
-	}
-	return nil
 }
 
 func (o *runtimeBindingReq) UnmarshalJSON(data []byte) error {
@@ -1703,174 +1684,6 @@ func emptyProxyRequest(w http.ResponseWriter, r *http.Request) bool {
 	return true
 }
 
-func safeMicroUSD(raw any) bool {
-	value, ok := raw.(float64)
-	return ok && value >= 0 && value <= 9007199254740991 && math.Trunc(value) == value
-}
-
-func safePositiveJSONInt(raw any) bool {
-	value, ok := raw.(float64)
-	return ok && value > 0 && value <= 9007199254740991 && math.Trunc(value) == value
-}
-
-func safeBillingHold(raw any) bool {
-	obj, ok := raw.(map[string]any)
-	if !ok || len(obj) != 5 || !exactJSONKeys(obj, "id", "workload_id", "amount_micro_usd", "expires_at", "created_at") {
-		return false
-	}
-	workload, workloadOK := obj["workload_id"].(string)
-	expires, expiresOK := obj["expires_at"].(string)
-	created, createdOK := obj["created_at"].(string)
-	if !safePositiveJSONInt(obj["id"]) || !workloadOK || !expiresOK || !createdOK || !pathSegmentRe.MatchString(workload) || !safeMicroUSD(obj["amount_micro_usd"]) {
-		return false
-	}
-	_, expiresErr := time.Parse(time.RFC3339, expires)
-	_, createdErr := time.Parse(time.RFC3339, created)
-	return expiresErr == nil && createdErr == nil
-}
-
-func containsUnsafeBillingField(raw any) bool {
-	unsafe := []string{"payment", "provider", "card", "invoice", "customer", "cipher", "nonce", "secret", "credential", "token"}
-	switch value := raw.(type) {
-	case map[string]any:
-		for key, child := range value {
-			lower := strings.ToLower(key)
-			for _, fragment := range unsafe {
-				if strings.Contains(lower, fragment) {
-					return true
-				}
-			}
-			if containsUnsafeBillingField(child) {
-				return true
-			}
-		}
-	case []any:
-		for _, child := range value {
-			if containsUnsafeBillingField(child) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func safeBillingError(raw any) bool {
-	obj, ok := raw.(map[string]any)
-	if !ok || len(obj) == 0 || !exactJSONKeys(obj, "error", "message") || containsUnsafeBillingField(raw) {
-		return false
-	}
-	for _, value := range obj {
-		if _, ok := value.(string); !ok {
-			return false
-		}
-	}
-	return true
-}
-
-func tenantBillingResponseValidator(tenant string) func([]byte, int) bool {
-	return func(body []byte, status int) bool {
-		var raw any
-		if json.Unmarshal(body, &raw) != nil || containsUnsafeBillingField(raw) {
-			return false
-		}
-		if status < 200 || status >= 300 {
-			return safeBillingError(raw)
-		}
-		obj, ok := raw.(map[string]any)
-		if !ok || (len(obj) != 8 && len(obj) != 9) || !exactJSONKeys(obj, "tenant_id", "currency", "balance_micro_usd", "held_micro_usd", "spendable_micro_usd", "debt_micro_usd", "frozen", "updated_at", "open_holds") || obj["tenant_id"] != tenant || obj["currency"] != "USD" {
-			return false
-		}
-		for _, key := range []string{"balance_micro_usd", "held_micro_usd", "spendable_micro_usd", "debt_micro_usd"} {
-			if !safeMicroUSD(obj[key]) {
-				return false
-			}
-		}
-		if _, ok := obj["frozen"].(bool); !ok {
-			return false
-		}
-		if updated, exists := obj["updated_at"]; exists {
-			stamp, ok := updated.(string)
-			if !ok || func() bool { _, err := time.Parse(time.RFC3339, stamp); return err == nil }() == false {
-				return false
-			}
-		}
-		holds, ok := obj["open_holds"].([]any)
-		if !ok || len(holds) > 100 {
-			return false
-		}
-		seen := map[float64]bool{}
-		for _, hold := range holds {
-			if !safeBillingHold(hold) {
-				return false
-			}
-			id := hold.(map[string]any)["id"].(float64)
-			if seen[id] {
-				return false
-			}
-			seen[id] = true
-		}
-		return true
-	}
-}
-
-func serviceCreditResponseValidator(tenant string, amount int64, key string) func([]byte, int) bool {
-	return func(body []byte, status int) bool {
-		var raw any
-		if json.Unmarshal(body, &raw) != nil || containsUnsafeBillingField(raw) {
-			return false
-		}
-		if status < 200 || status >= 300 {
-			return safeBillingError(raw)
-		}
-		obj, ok := raw.(map[string]any)
-		granted, grantedOK := obj["granted"].(bool)
-		return ok && len(obj) == 5 && exactJSONKeys(obj, "tenant_id", "amount_micro_usd", "currency", "idempotency_key", "granted") && obj["tenant_id"] == tenant && obj["currency"] == "USD" && obj["idempotency_key"] == key && safeMicroUSD(obj["amount_micro_usd"]) && obj["amount_micro_usd"] == float64(amount) && grantedOK && granted
-	}
-}
-
-func (a *app) handleTenantBilling(w http.ResponseWriter, r *http.Request) {
-	tenant := r.PathValue("tenant_id")
-	if !pathSegmentRe.MatchString(tenant) {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid tenant id"})
-		return
-	}
-	if !emptyProxyRequest(w, r) {
-		return
-	}
-	a.relayAccountAPIWithBody(w, r, http.MethodGet, accountAPIVersion+"/tenants/"+tenant+"/billing", nil, http.NoBody, "", maxBillingRespBytes, relayExtras{validateResp: tenantBillingResponseValidator(tenant)})
-}
-
-func (a *app) handleOperatorServiceCredit(w http.ResponseWriter, r *http.Request) {
-	tenant := r.PathValue("tenant_id")
-	if !pathSegmentRe.MatchString(tenant) || r.URL.RawQuery != "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid service credit request"})
-		return
-	}
-	if len(r.Header.Values("Content-Type")) != 1 || r.Header.Get("Content-Type") != "application/json" {
-		writeJSON(w, http.StatusUnsupportedMediaType, map[string]string{"error": "Content-Type must be application/json"})
-		return
-	}
-	r.Body = http.MaxBytesReader(w, r.Body, maxServiceCreditJSONBytes)
-	dec := json.NewDecoder(r.Body)
-	var in *serviceCreditReq
-	if err := dec.Decode(&in); err != nil {
-		var tooLarge *http.MaxBytesError
-		if errors.As(err, &tooLarge) {
-			writeJSON(w, http.StatusRequestEntityTooLarge, map[string]string{"error": "service credit JSON is too large"})
-		} else {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid service credit JSON"})
-		}
-		return
-	}
-	if in == nil || dec.Decode(&struct{}{}) != io.EOF || in.AmountMicroUSD <= 0 || in.AmountMicroUSD > 9007199254740991 || !serviceCreditKeyRe.MatchString(in.IdempotencyKey) {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid service credit fields"})
-		return
-	}
-	body, _ := json.Marshal(in)
-	path := accountAPIVersion + "/operator/tenants/" + tenant + "/billing/service-credits"
-	a.relayAccountAPIWithBody(w, r, http.MethodPost, path, nil, bytes.NewReader(body), "application/json", maxBillingRespBytes, relayExtras{validateResp: serviceCreditResponseValidator(tenant, in.AmountMicroUSD, in.IdempotencyKey)})
-}
-
 func linodeCloudAccountResponseValidator(tenant string) func([]byte, int) bool {
 	return func(body []byte, status int) bool {
 		var raw any
@@ -1980,7 +1793,7 @@ func (a *app) handleCreateWorkload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// A create without a usable key is refused here rather than upstream: a
-	// submit that central cannot deduplicate is a paid operation waiting to run
+	// submit that central cannot deduplicate is an operation waiting to run
 	// twice. The rejection never repeats the key back.
 	key, ok := idempotencyKey(r)
 	if !ok {

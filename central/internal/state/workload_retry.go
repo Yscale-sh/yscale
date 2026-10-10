@@ -64,8 +64,8 @@ func (s *Store) PrepareWorkloadRetry(ctx context.Context, customer, account, sou
 }
 
 // ReserveWorkloadRetry commits current retry authority, the accepted audit and
-// the existing admission reservation together. No provider/billing/lifecycle
-// callback executes while those state locks are held.
+// the existing admission reservation together. No provider/lifecycle callback
+// executes while those state locks are held.
 func (s *Store) ReserveWorkloadRetry(ctx context.Context, approval *WorkloadRetryApproval, workloadID string, candidateMicroUSD int64) (string, *AuditEvent, error) {
 	if err := ctx.Err(); err != nil {
 		return "", nil, err

@@ -79,7 +79,7 @@ func TestBurstSnapshotContextDetachedInMemory(t *testing.T) {
 	s := emptyStore()
 	at := time.Now().UTC()
 	original := &Burst{ID: "burst", CustomerID: "customer", BackendID: "original",
-		Billing: &WorkloadBilling{HoldID: 101}, TerminalCost: &WorkloadCost{BurstID: "burst"},
+		TerminalCost:    &WorkloadCost{BurstID: "burst"},
 		LastHeartbeatAt: &at, NodePhaseAt: &at, OccupancyObservedAt: &at}
 	s.bursts[original.ID] = original
 	before := cloneBurstSnapshot(original)
@@ -88,7 +88,6 @@ func TestBurstSnapshotContextDetachedInMemory(t *testing.T) {
 		t.Fatalf("snapshot differs: %v", err)
 	}
 	read.BackendID = "changed"
-	read.Billing.HoldID = 202
 	read.TerminalCost.BurstID = "changed"
 	*read.LastHeartbeatAt = at.Add(time.Hour)
 	*read.NodePhaseAt = at.Add(2 * time.Hour)

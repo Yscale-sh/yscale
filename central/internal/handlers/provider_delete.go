@@ -160,7 +160,6 @@ type ProviderDeleteWorker struct {
 	Store        *state.Store
 	Commands     ConnectorCommandLedger
 	CostRecorder workloadCostRecorder
-	Billing      BurstBilling
 	Cost         *cost.Meter
 	Log          *slog.Logger
 
@@ -270,8 +269,8 @@ func (w *ProviderDeleteWorker) process(ctx context.Context, record lifecycle.Pro
 	}
 	if w.Reaper == nil {
 		// Fail closed. A worker with no provider client cannot confirm absence,
-		// and confirming it anyway would terminalize a delete — stop the billing,
-		// release the /24, settle the ledger — for a node that is still running.
+		// and confirming it anyway would terminalize a delete — stop the cost,
+		// release the /24, freeze the receipt — for a node that is still running.
 		// This is a wiring fault, so it goes straight to an operator.
 		w.fail(ctx, record, "provider delete worker has no provider client configured",
 			providerDeleteImmediateAttention)
@@ -389,25 +388,25 @@ func (w *ProviderDeleteWorker) repair(ctx context.Context, event lifecycle.Outbo
 		// The payload is the delete operation's own immutable one, so this is not
 		// a retryable condition — it is a repair nobody can perform.
 		w.failCleanup(ctx, event, fmt.Sprintf("provider-delete cleanup payload undecodable: %v", err),
-			nil, false, providerDeleteImmediateAttention)
+			providerDeleteImmediateAttention)
 		return
 	}
 	b := job.Burst
 	if strings.TrimSpace(b.CustomerID) != strings.TrimSpace(event.CustomerID) {
-		// Settlement and receipts are written against a customer. A repair whose
-		// payload names a different one would bill the wrong tenant for a node.
+		// Cost and reap receipts are written against a customer. A repair whose
+		// payload names a different one would charge the wrong tenant for a node.
 		w.failCleanup(ctx, event, "provider-delete cleanup payload does not match the recorded customer",
-			nil, false, providerDeleteImmediateAttention)
+			providerDeleteImmediateAttention)
 		return
 	}
 	attemptCtx, cancelAttempt := context.WithTimeout(ctx, w.attemptTimeout())
-	economicSettled, err := w.cleanup(attemptCtx, &b, job, event.CreatedAt)
+	err = w.cleanup(attemptCtx, &b, job, event.CreatedAt)
 	cancelAttempt()
 	if err != nil {
 		w.Log.Warn("provider resource is gone but post-delete cleanup did not complete; the repair is durable and retries",
 			"burst", b.ID, "customer", b.CustomerID, "cleanup", event.ID,
 			"attempt", event.Attempts, "error", err)
-		w.failCleanup(ctx, event, err.Error(), b.Billing, economicSettled, w.maxAttempts())
+		w.failCleanup(ctx, event, err.Error(), w.maxAttempts())
 		return
 	}
 	if err := w.Deletes.AcknowledgeOutboxEvent(ctx, event.ID, event.LeaseToken); err != nil {
@@ -424,37 +423,13 @@ func (w *ProviderDeleteWorker) repair(ctx context.Context, event lifecycle.Outbo
 // failCleanup records the failure against the repair's own outbox row, using
 // the existing retry and dead-letter transitions. It never touches the delete
 // operation or the burst: both are terminal, and the provider resource they
-// describe really is gone. Before an economically incomplete paid repair is
-// dead-lettered, it patches the exact workload billing association so the hold
-// remains fail-closed for operator reconciliation.
+// describe really is gone.
 func (w *ProviderDeleteWorker) failCleanup(
 	ctx context.Context,
 	event lifecycle.OutboxEvent,
 	safeError string,
-	billingAssociation *state.WorkloadBilling,
-	economicSettled bool,
 	maxAttempts int,
 ) {
-	if event.Attempts >= maxAttempts && billingAssociation != nil && !economicSettled {
-		// Dead-lettering a paid repair with neither a capture nor a durable
-		// operator flag would leave a pending costless hold looking healthy to
-		// usage reconciliation and eligible for expiry. Patch only this exact
-		// tenant/workload/hold association; a whole-row rewrite could erase a
-		// concurrent cost observation or lifecycle update.
-		if w.Store == nil {
-			w.Log.Error("post-delete economic cleanup exhausted but its billing association cannot be protected; the repair lease will expire and retry",
-				"cleanup", event.ID, "customer", event.CustomerID, "error", safeError)
-			return
-		}
-		protected, err := w.Store.MarkWorkloadBillingManualAttention(ctx, event.CustomerID,
-			billingAssociation.WorkloadRef, billingAssociation.HoldID)
-		if err != nil || !protected {
-			w.Log.Error("post-delete economic cleanup exhausted but manual attention was not durable; the repair lease will expire and retry",
-				"cleanup", event.ID, "customer", event.CustomerID, "cause", safeError,
-				"protected", protected, "error", err)
-			return
-		}
-	}
 	retryAt := w.now().Add(providerDeleteBackoff(event.Attempts))
 	if err := w.Deletes.MarkOutboxFailed(ctx, event.ID, event.LeaseToken, safeError, retryAt, maxAttempts); err != nil {
 		w.Log.Error("post-delete cleanup failed and the failure itself was not recorded; the lease expires and the repair is reclaimed",
@@ -463,8 +438,8 @@ func (w *ProviderDeleteWorker) failCleanup(
 	}
 	if event.Attempts >= maxAttempts {
 		// Explicit on exhaustion: the money half of this teardown stopped when the
-		// provider confirmed, so nobody is being overcharged — but a receipt, a
-		// settlement or a node object is missing and only an operator can close it.
+		// provider confirmed, so nobody is being overcharged — but a receipt or a
+		// node object is missing and only an operator can close it.
 		w.Log.Error("post-delete cleanup exhausted automatic retries and is dead-lettered; the provider resource IS gone, the history behind it is incomplete",
 			"cleanup", event.ID, "customer", event.CustomerID, "aggregate", event.AggregateID,
 			"attempts", event.Attempts, "error", safeError)
@@ -476,23 +451,21 @@ func (w *ProviderDeleteWorker) failCleanup(
 }
 
 // cleanup runs the existing post-provider steps for a resource that is already
-// confirmed gone. It returns whether the prepaid obligation was provably
-// settled so exhaustion can distinguish an unrelated cleanup failure from an
-// economically unsafe one. Every step is idempotent, so a replay after a crash
-// costs a repeated write and nothing else.
-func (w *ProviderDeleteWorker) cleanup(ctx context.Context, b *state.Burst, job teardownJob, confirmedAt time.Time) (bool, error) {
+// confirmed gone. Every step is idempotent, so a replay after a crash costs a
+// repeated write and nothing else.
+func (w *ProviderDeleteWorker) cleanup(ctx context.Context, b *state.Burst, job teardownJob, confirmedAt time.Time) error {
 	if w.Store == nil {
-		return false, errors.New("state store is unavailable for post-delete cleanup")
+		return errors.New("state store is unavailable for post-delete cleanup")
 	}
 
-	// Provider absence is the economic hinge. Freeze the cost at its durable
-	// confirmation timestamp and settle the prepaid hold before mesh, account,
-	// PodCIDR, node, or legacy-state cleanup can fail. Replays use first-write-
-	// wins cost persistence and stable settlement keys.
+	// Provider absence is the cost hinge. Freeze the cost at its durable
+	// confirmation timestamp before mesh, account, PodCIDR, node, or
+	// legacy-state cleanup can fail. Replays use first-write-wins cost
+	// persistence.
 	observed := job.Cost
 	if observed == nil {
 		if confirmedAt.IsZero() {
-			return false, errors.New("provider confirmation timestamp is unavailable for cost settlement")
+			return errors.New("provider confirmation timestamp is unavailable for the cost receipt")
 		}
 		confirmed := providerDeleteCostForBurst(b, confirmedAt.UTC())
 		observed = &confirmed
@@ -500,24 +473,13 @@ func (w *ProviderDeleteWorker) cleanup(ctx context.Context, b *state.Burst, job 
 	if w.costRecorder() != nil {
 		recorded, err := w.costRecorder().EnsureWorkloadCostForBurst(ctx, *observed)
 		if err != nil {
-			return false, fmt.Errorf("cost receipt not durable: %w", err)
+			return fmt.Errorf("cost receipt not durable: %w", err)
 		}
 		if !recorded {
-			if b.Billing != nil {
-				return false, errors.New("authoritative cost receipt is unavailable for billed burst")
-			}
 			w.Log.Info("deleted burst has no workload row for a cost observation; recording the independent reap receipt",
 				"burst", b.ID, "customer", b.CustomerID)
 		}
-	} else if b.Billing != nil {
-		return false, errors.New("cost recorder is unavailable for billed burst")
 	}
-	if b.Billing != nil {
-		if err := settleBurstBilling(ctx, w.Billing, b, observed); err != nil {
-			return false, fmt.Errorf("prepaid settlement failed: %w", err)
-		}
-	}
-	economicSettled := true
 
 	// MarkProviderDeleteSucceeded and this repair are one durable handoff. The
 	// fast path retires the live burst immediately after that transaction, but a
@@ -527,17 +489,17 @@ func (w *ProviderDeleteWorker) cleanup(ctx context.Context, b *state.Burst, job 
 	// Do this before fallible mesh cleanup so an unrelated coordination outage
 	// cannot keep a provider-confirmed-absent resource live in the state store.
 	if _, _, err := w.Store.ClaimBurst(b.ID); err != nil {
-		return economicSettled, fmt.Errorf("live burst retirement not durable: %w", err)
+		return fmt.Errorf("live burst retirement not durable: %w", err)
 	}
 	if w.Reaper == nil {
-		return economicSettled, errors.New("provider delete worker has no post-provider cleanup configured")
+		return errors.New("provider delete worker has no post-provider cleanup configured")
 	}
 	if err := w.Reaper.CleanupMesh(ctx, b); err != nil {
-		return economicSettled, fmt.Errorf("mesh cleanup failed: %w", err)
+		return fmt.Errorf("mesh cleanup failed: %w", err)
 	}
 	if b.CloudAccountID != "" {
 		if err := w.Store.ReleaseCloudAccountLease(ctx, b.ID); err != nil {
-			return economicSettled, fmt.Errorf("cloud-account lease release failed: %w", err)
+			return fmt.Errorf("cloud-account lease release failed: %w", err)
 		}
 	}
 	// The provider node is gone, so its /24 can no longer collide with a new
@@ -547,17 +509,17 @@ func (w *ProviderDeleteWorker) cleanup(ctx context.Context, b *state.Burst, job 
 		release = releasePodSlot
 	}
 	if err := release(ctx, w.Store, w.Log, b); err != nil {
-		return economicSettled, fmt.Errorf("pod slot release failed: %w", err)
+		return fmt.Errorf("pod slot release failed: %w", err)
 	}
 	if recorded, err := w.Store.RecordBurstReap(ctx, b.ID, b.CustomerID); err != nil {
-		return economicSettled, fmt.Errorf("teardown receipt not durable: %w", err)
+		return fmt.Errorf("teardown receipt not durable: %w", err)
 	} else if !recorded {
-		return economicSettled, errors.New("teardown receipt not durable")
+		return errors.New("teardown receipt not durable")
 	}
 	if err := drainBurstNode(ctx, w.Store, w.Commands, w.Log, b, job.Reason); err != nil {
-		return economicSettled, fmt.Errorf("node cleanup not acknowledged: %w", err)
+		return fmt.Errorf("node cleanup not acknowledged: %w", err)
 	}
-	return economicSettled, nil
+	return nil
 }
 
 func providerDeleteCostForBurst(b *state.Burst, confirmedAt time.Time) state.WorkloadCost {

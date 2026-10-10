@@ -38,16 +38,6 @@ var seams = []seam{
 		Outcome: "cross_tenant_workload_logs_return_uniform_not_found",
 	},
 	{
-		Seam:    "tenant_billing_customer_facing_authorization",
-		Package: "github.com/yscale-sh/yscale/central/internal/handlers",
-		Tests: []string{
-			"TestTenantBillingSummaryIsMemberSafeAndTenantIsolated",
-			"TestTenantBillingStatementJSONAndCSVAreBoundedTenantSafeSnapshots",
-			"TestTenantCheckoutPersistsBeforeProviderAndIsExactlyReplayable",
-		},
-		Outcome: "cross_tenant_billing_summary_statement_and_checkout_denied_before_billing_or_checkout_dispatch",
-	},
-	{
 		Seam:    "connector_credential_scope",
 		Package: "github.com/yscale-sh/yscale/central/internal/handlers",
 		Tests:   []string{"TestConnectorCredentialIsScopedToAgentRoutes"},
@@ -269,7 +259,6 @@ func TestEvidenceGoldenMatchesInMemory(t *testing.T) {
 		Postures:      postures,
 		RemainingLiveEvidence: []string{
 			"mesh_network_reachability",
-			"paid_flow_activation",
 		},
 	}
 	got, err := json.MarshalIndent(art, "", "  ")

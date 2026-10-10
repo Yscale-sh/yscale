@@ -67,7 +67,6 @@ build:
 	$(GO) build -trimpath -o "$(BIN_DIR)/yscale-agent" ./agent/cmd/yscale-agent
 	$(GO) build -trimpath -o "$(BIN_DIR)/yscale-factory" ./factory/cmd/yscale-factory
 	$(GO) build -trimpath -o "$(BIN_DIR)/yscale-lifecycle-migrate" ./central/cmd/yscale-lifecycle-migrate
-	$(GO) build -trimpath -o "$(BIN_DIR)/yscale-billing-migrate" ./central/cmd/yscale-billing-migrate
 
 run: build
 	./bin/yscale-cloud

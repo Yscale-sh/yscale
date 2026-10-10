@@ -314,7 +314,7 @@ No yscale-specific integration code. Same kubectl, same Argo CLI, same `tkn` —
 
 ## Multi-cluster
 
-One Helm release per cluster. Each cluster gets its own `cluster-id` (persisted in PVC) so central tracks them independently. The bearer token in `YSCALE_TOKEN` ties them all to the same customer / billing entity.
+One Helm release per cluster. Each cluster gets its own `cluster-id` (persisted in PVC) so central tracks them independently. The bearer token in `YSCALE_TOKEN` ties them all to the same tenant.
 
 Don't run two agents in one namespace — `cluster-id` collision causes central to alternately accept commands from both. Use distinct release names + namespaces if you really need multiple agents in one cluster (no good reason though).
 

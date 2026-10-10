@@ -89,28 +89,6 @@ spec:
               operational observations may be replayed after restart. Check
               PostgreSQL reachability and central logs before retrying work.
 
-        # Paid admission is tied to this same signal. A ledger/materialization
-        # difference, a failed query, a stale worker, or loss of the health
-        # series while the managed worker is enabled therefore pages while the
-        # control plane remains fail closed.
-        - alert: BillingReconciliationUnhealthy
-          expr: |
-            max(yscale_billing_reconciliation_enabled) == 1
-            and
-            (min(yscale_billing_reconciliation_healthy) == 0
-             or absent(yscale_billing_reconciliation_healthy))
-          for: 2m
-          labels:
-            severity: critical
-          annotations:
-            summary: "Billing ledger reconciliation is unhealthy"
-            description: >-
-              Billing materializations no longer reconcile with the append-only
-              ledger, the reconciliation query failed or became stale, or its
-              health metric disappeared. Paid burst admission is closed. Inspect
-              the bounded difference metrics and central logs; do not rewrite
-              balances automatically.
-
         # Any reap failure is actionable: it means a cloud VM was NOT torn
         # down and may be accumulating cost. Fire immediately (no `for:`).
         - alert: ReapFailures

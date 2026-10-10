@@ -10,7 +10,7 @@ const heroRise = {
 const INCLUDED = [
   ["01", "Compute and networking", "Central, the Cluster Connector and provider adapters provision burst nodes. The gateway connects them to your cluster network."],
   ["02", "Mesh coordination", "The fabric factory manages tenant isolation and Headscale/DERP coordination. You run the services and their supporting infrastructure."],
-  ["03", "Application and business logic", "Account and tenant management, metering, billing and payment integrations, operator tools, and the console are included in the same distribution."],
+  ["03", "Application and business logic", "Account and tenant management, cloud cost estimates, operator tools, and the console are included in the same distribution."],
 ];
 
 export function SourceAvailable() {
@@ -65,7 +65,7 @@ export function SourceAvailable() {
         <div className="source-included">
           {INCLUDED.map(([number, title, body], i) => <Reveal key={number} delay={i * 0.1}><span>{number}</span><h3>{title}</h3><p>{body}</p></Reveal>)}
         </div>
-        <p>You can self-host your own applications without enabling customer payments. The included billing code is available for installations that need those integrations, subject to the license.</p>
+        <p>You self-host your applications on infrastructure you manage and pay your cloud providers directly.</p>
       </section>
 
       <section className="source-usecases" aria-labelledby="usecases-title">
@@ -93,7 +93,7 @@ export function SourceAvailable() {
 
       <section className="wrap source-section source-faq" id="faq" aria-labelledby="faq-title">
         <Reveal className="source-section-heading"><p className="eyebrow">05 / COMMON QUESTIONS</p><h2 id="faq-title">Before you install.</h2></Reveal>
-        <details><summary>Does Yscale host the service for me?</summary><p>No. You operate central, the factory, connector, gateway, databases and mesh on infrastructure you manage. Self-hosting does not require a Yscale-hosted account or prepaid-credit signup.</p></details>
+        <details><summary>Does Yscale host the service for me?</summary><p>No. You operate central, the factory, connector, gateway, databases and mesh on infrastructure you manage. Self-hosting does not require a Yscale-hosted account.</p></details>
         <details><summary>Do I need a Tailscale account?</summary><p>No. Use your own Headscale coordinators for the workload mesh and the separate operations mesh. Infrastructure nodes use the Tailscale client software. Workload authors use Kubernetes access, without a VPN app on their laptops. <a href="/docs/factory-environment.html#self-hosted-ops-setup">Configure the operations mesh.</a></p></details>
         <details><summary>What do operators need to set up?</summary><p>Deploy the services, databases and mesh coordinators. Build your node images and configure provider credentials, quotas, TLS and private routing. The factory uses Linode for persistent coordination boxes, even when workers run elsewhere. <a href="/docs/self-hosted-mesh.html">Review the operator prerequisites.</a></p></details>
         <details><summary>Which clouds and GPUs are supported?</summary><p>The source includes Fly CPU, Linode and AWS CPU/GPU, and Azure and GCP CPU paths. Azure and GCP GPU support is outside this release scope. Verify your specific region, image, instance shape and cluster before relying on it. <a href="/docs/configuration-status.html">Check configuration status.</a></p></details>

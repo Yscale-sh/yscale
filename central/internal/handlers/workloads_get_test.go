@@ -5,11 +5,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
-	"github.com/yscale-sh/yscale/central/internal/billing"
 	"github.com/yscale-sh/yscale/central/internal/state"
 )
 
@@ -17,41 +15,6 @@ func workloadGetReq(cust *state.Customer, id string) *http.Request {
 	r := httptest.NewRequest(http.MethodGet, "/v1/workloads/"+id, nil)
 	r.SetPathValue("id", id)
 	return r.WithContext(context.WithValue(r.Context(), ctxCustomer, cust))
-}
-
-func TestWorkloadGetIncludesSafeBillingReceipt(t *testing.T) {
-	store := state.New()
-	cust, err := store.CustomerByID(state.DevCustomerID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	store.PutWorkload(&state.Workload{ID: "wl_bill", CustomerID: cust.ID, Status: "running", Billing: &state.WorkloadBilling{
-		HoldID: 9, WorkloadRef: "wl_bill", ReservedMicroUSD: 100, Currency: "USD", QuoteID: "quote_safe", PricingVersion: 2,
-	}})
-	events := []string{}
-	ledger := &orderedBilling{events: &events, hold: billing.Hold{
-		ID: 9, CustomerID: cust.ID, AmountMicroUSD: 100, CapturedMicroUSD: 80, State: billing.HoldCaptured,
-		PriceQuote: billing.PriceQuote{Provider: "secret-provider", SKU: "secret-sku", Region: "secret-region"},
-	}}
-	h := &Workloads{Store: store, Billing: ledger, Log: quietLog()}
-	rec := httptest.NewRecorder()
-	h.Get(rec, workloadGetReq(cust, "wl_bill"))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("Get = %d: %s", rec.Code, rec.Body)
-	}
-	var response map[string]any
-	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
-		t.Fatal(err)
-	}
-	receipt, ok := response["billing"].(map[string]any)
-	if !ok || receipt["quote_id"] != "quote_safe" || receipt["state"] != string(billing.HoldCaptured) {
-		t.Fatalf("billing receipt = %#v", response["billing"])
-	}
-	for _, secret := range []string{"secret-provider", "secret-sku", "secret-region", "provider", "payment"} {
-		if strings.Contains(rec.Body.String(), secret) {
-			t.Fatalf("detail leaked %q: %s", secret, rec.Body)
-		}
-	}
 }
 
 // GET /v1/workloads/{id} surfaces a live spent_usd computed on the same

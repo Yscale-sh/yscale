@@ -66,7 +66,7 @@ make build
 ```
 
 `make build` includes `yscale`, `yscale-cloud`, `yscale-agent`,
-`yscale-factory`, `yscale-lifecycle-migrate` and `yscale-billing-migrate`.
+`yscale-factory` and `yscale-lifecycle-migrate`.
 The CLI alone is not the control plane. `make run` starts central; the older
 standalone Fly controller is explicitly available as `make run-legacy-controller`.
 
@@ -111,9 +111,6 @@ for a normal service. Central state and factory state also require backups.
 
 Do **not** set `TS_OAUTH_CLIENT_ID` or `TS_OAUTH_CLIENT_SECRET` on central.
 The full release rejects them rather than falling back to shared coordination.
-The example does not turn on Stripe, customer payments or paid-runtime
-admission. Those are independent capabilities, not a requirement imposed by
-choosing managed mesh.
 
 ## 3. Start your factory, then central
 

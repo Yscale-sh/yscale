@@ -24,7 +24,7 @@ test("the contract check rejects everything central would", () => {
 });
 
 // The whole point: a double click, a page-level retry, or a proxy timeout on the
-// same reviewed YAML is one paid run, not several.
+// same reviewed YAML is one run, not several.
 test("one submission keeps one key however many times it is retried", () => {
   const keys = createIdempotencyKeys();
   const first = keys.keyFor(YAML_A);

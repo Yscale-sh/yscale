@@ -22,9 +22,9 @@ The current real factory uses Linode for persistent coordination boxes even when
 
 ## What you operate
 
-There is no Yscale-hosted service, compulsory signup, subscription or payment checkout. You run central and the factory, maintain the databases, and manage TLS, mesh routing, secrets and cloud accounts.
+There is no Yscale-hosted service, compulsory signup or subscription. You run central and the factory, maintain the databases, and manage TLS, mesh routing, secrets and cloud accounts.
 
-The full source includes the connector, gateway and cloud adapters alongside central and the factory. It also includes tenant and account management, metering, billing and payment integrations, tools and the console. Those integrations do not require you to buy a Yscale service.
+The full source includes the connector, gateway and cloud adapters alongside central and the factory. It also includes tenant and account management, cloud cost estimates, tools and the console.
 
 Installation begins with the local no-cloud smoke test. It exercises control-plane provisioning with a fake worker; it does not create a running mesh or demonstrate node enrollment.
 

@@ -2,7 +2,7 @@
 
 Yscale is experimental software that you operate alongside your Kubernetes cluster. There is no Yscale-hosted service. Start with [operator setup](self-hosted-mesh.md).
 
-You run central, the factory, databases and container images, and manage TLS, secrets, mesh routing and cloud accounts. The source also includes account management, tenancy, metering and payment integrations; those integrations require your own configuration.
+You run central, the factory, databases and container images, and manage TLS, secrets, mesh routing and cloud accounts. The source also includes account management, tenancy and estimates of your cloud costs.
 
 Configure a separate self-hosted operations coordinator and private callback path. `FACTORY_OPS_LOGIN_SERVER` is mandatory, with no hosted fallback. Infrastructure nodes still use Tailscale clients, but you do not need a Tailscale account or subscription.
 
@@ -10,7 +10,7 @@ Cloud resources are billed through your provider accounts until deleted. Yscale 
 
 ## State and recovery
 
-Inventory the PostgreSQL databases used by central, lifecycle, billing and the
+Inventory the PostgreSQL databases used by central, lifecycle and the
 factory. Keep their schemas, encrypted credentials, the factory KEK, and the
 tenant coordination servers' Headscale state recoverable together. Losing the
 KEK can make stored credentials unusable even when the database backup exists.
