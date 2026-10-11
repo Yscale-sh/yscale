@@ -108,7 +108,7 @@ type BootstrapServer struct {
 // (recorded for logging/observability now that full is the only
 // supported tier), the workload namespace central authorized the burst
 // for, and the storage bindings served in the bootstrap response. Fields
-// are set once in AuthorizeBurst and read-only afterwards.
+// and mint state are guarded by BootstrapServer.mu.
 type burstGrant struct {
 	// tier is the announced networking tier. Only "full" (or "", from an
 	// older central) is reachable in production: workload admission refuses
@@ -118,6 +118,9 @@ type burstGrant struct {
 	tier      string
 	namespace string
 	storage   []protocol.StorageBinding
+	// A successful mint consumes only bootstrap permission, not storage or telemetry.
+	consumed bool
+	minting  bool
 }
 
 // NewBootstrapServer reads the API server URL and CA bundle from the
@@ -175,7 +178,13 @@ func expectedBurstNodeName(burstID string) string {
 func (s *BootstrapServer) AuthorizeBurst(burstID, tier, namespace string, bindings []protocol.StorageBinding) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.grants[burstID] = &burstGrant{tier: tier, namespace: namespace, storage: bindings}
+	grant := s.grants[burstID]
+	if grant == nil {
+		grant = &burstGrant{}
+		s.grants[burstID] = grant
+	}
+	// Repeated announcements must not restore a consumed bootstrap permission.
+	grant.tier, grant.namespace, grant.storage = tier, namespace, bindings
 }
 
 // authorizedStorage returns what the agent may sign for a burst: the
@@ -377,16 +386,26 @@ func (s *BootstrapServer) handleBootstrap(w http.ResponseWriter, r *http.Request
 
 	s.mu.Lock()
 	grant := s.grants[req.BurstID]
-	if grant != nil {
-		// Remember which Node this burst registers as, so teardown
-		// (DrainNode carries only the node name) can revoke the grant.
-		s.nodes[req.NodeName] = req.BurstID
-	}
-	s.mu.Unlock()
-	if grant == nil {
+	if grant == nil || grant.consumed {
+		s.mu.Unlock()
 		http.Error(w, "unauthorized burst id", http.StatusForbidden)
 		return
 	}
+	if grant.minting {
+		s.mu.Unlock()
+		http.Error(w, "bootstrap mint in progress", http.StatusServiceUnavailable)
+		return
+	}
+	grant.minting = true
+	bindings := grant.storage
+	// Keep teardown and storage authorization independent of single-use minting.
+	s.nodes[req.NodeName] = req.BurstID
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		grant.minting = false
+		s.mu.Unlock()
+	}()
 	// Log the source IP for audit; tailnet ACL is the trust boundary,
 	// not the IP itself (tailnet IPs are dynamically assigned).
 	if remoteHost, _, _ := net.SplitHostPort(r.RemoteAddr); remoteHost != "" {
@@ -439,7 +458,10 @@ func (s *BootstrapServer) handleBootstrap(w http.ResponseWriter, r *http.Request
 		s.Log.Warn("issue cilium kubeconfig (continuing without)", "error", err)
 	}
 
-	bindings := grant.storage
+	// Consume after successful credential creation, even if delivery fails.
+	s.mu.Lock()
+	grant.consumed = true
+	s.mu.Unlock()
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(BootstrapResponse{

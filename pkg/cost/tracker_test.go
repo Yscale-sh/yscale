@@ -243,3 +243,46 @@ func TestNilTrackerSafe(t *testing.T) {
 		t.Fatalf("expected zero snapshot, got %+v", got)
 	}
 }
+
+func TestCapReachedIncludesActiveAccrual(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		cap       float64
+		completed float64
+		hours     time.Duration
+		want      bool
+	}{
+		{"below cap", 3, 0, time.Hour, false},
+		{"active reaches cap", 2, 0, time.Hour, true},
+		{"completed plus active", 3, 1, time.Hour, true},
+		{"above cap", 1, 0, time.Hour, true},
+		{"clock moves backward", 1, 0, -time.Hour, false},
+		{"disabled", 0, 0, time.Hour, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			clock := time.Date(2026, 5, 7, 12, 0, 0, 0, time.UTC)
+			tr := New(Rates{Backends: map[string]BackendRate{"test": {BaseUSDPerHour: 1}}}, tc.cap)
+			withClock(tr, func() time.Time { return clock })
+			tr.monthStart = monthStartOf(clock)
+			tr.monthSpentUSD = tc.completed
+			tr.Start("one", "test", 0, 0, "")
+			tr.Start("two", "test", 0, 0, "")
+			clock = clock.Add(tc.hours)
+			for i := 0; i < 2; i++ {
+				if got := tr.CapReached(); got != tc.want {
+					t.Errorf("CapReached = %v, want %v", got, tc.want)
+				}
+			}
+			if tr.monthSpentUSD != tc.completed || len(tr.active) != 2 {
+				t.Fatal("cap check must not accrue or stop active runs")
+			}
+			if tc.hours >= 0 {
+				tr.Stop("one")
+				tr.Stop("two")
+				if got := tr.CapReached(); got != tc.want {
+					t.Errorf("CapReached after Stop = %v, want %v", got, tc.want)
+				}
+			}
+		})
+	}
+}

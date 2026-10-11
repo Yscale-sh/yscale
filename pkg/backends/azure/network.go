@@ -2,8 +2,11 @@ package azure
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
 	armnetwork "github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/network/armnetwork/v4"
 )
@@ -101,6 +104,16 @@ func (b *Backend) ensureVNet(ctx context.Context, location string, tags map[stri
 // provide with zero rules of our own — all burst control traffic
 // (kubelet, cilium) rides the tailnet overlay, not the public interface.
 func (b *Backend) ensureNSG(ctx context.Context, location string, tags map[string]*string) (string, error) {
+	existing, err := b.nsgClient.Get(ctx, b.resourceGroup, nsgNameFor(location), nil)
+	if err != nil {
+		var responseErr *azcore.ResponseError
+		if !errors.As(err, &responseErr) || responseErr.StatusCode != http.StatusNotFound {
+			return "", fmt.Errorf("getting NSG %s: %w", nsgNameFor(location), err)
+		}
+	} else if tagValue(existing.Tags, ownerTagKey) != ownerTagValue {
+		return "", fmt.Errorf("NSG %s is not owned by yscale", nsgNameFor(location))
+	}
+
 	poller, err := b.nsgClient.BeginCreateOrUpdate(ctx, b.resourceGroup, nsgNameFor(location), armnetwork.SecurityGroup{
 		Location:   to.Ptr(location),
 		Tags:       tags,

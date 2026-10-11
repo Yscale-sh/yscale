@@ -198,9 +198,13 @@ func (s *MemoryStore) SetBox(box Box, plaintextAPIKey string) error {
 	box.apiKeyEnc = apiKeyEnc
 
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.persister != nil {
+		if err := s.persister.UpsertBox(box); err != nil {
+			return fmt.Errorf("factory store: persist box: %w", err)
+		}
+	}
 	s.boxes[box.LoginServer] = cloneBox(box)
-	s.pUpsertBox(box)
-	s.mu.Unlock()
 	return nil
 }
 
@@ -228,30 +232,36 @@ func (s *MemoryStore) PromoteFabric(stagingLoginServer string, box Box, plaintex
 	var repointed []Job
 	restage := stagingLoginServer != "" && stagingLoginServer != box.LoginServer
 	if restage {
-		delete(s.boxes, stagingLoginServer)
-		for id, job := range s.jobs {
+		for _, job := range s.jobs {
 			if job.LoginServer == stagingLoginServer {
 				job.LoginServer = box.LoginServer
-				s.jobs[id] = job
 				repointed = append(repointed, job)
 			}
 		}
 	}
+	// Persist credentials and job ownership before deleting staging. On any
+	// failure retain the in-memory staging record so promotion can be retried.
+	if s.persister != nil {
+		if err := s.persister.UpsertBox(box); err != nil {
+			return fmt.Errorf("factory store: persist promoted box: %w", err)
+		}
+		for _, job := range repointed {
+			if err := s.persister.UpsertJob(job); err != nil {
+				return fmt.Errorf("factory store: persist promoted job: %w", err)
+			}
+		}
+		if restage {
+			if err := s.persister.DeleteBox(stagingLoginServer); err != nil {
+				return fmt.Errorf("factory store: delete staging box: %w", err)
+			}
+		}
+	}
 	s.boxes[box.LoginServer] = cloneBox(box)
-
-	// Durable write-through is SAFE-ORDERED so a crash can never lose the box:
-	// its api_key_enc is not recoverable by rebuild (design §187). Persist the
-	// real box FIRST (key durable), repoint the job(s), and delete the staging
-	// record LAST — a crash between steps leaves at worst a harmless staging
-	// orphan (its status is provisioning, no job points to it), never a lost
-	// box. Best-effort like central's persister; the worker's subsequent
-	// SetBoxStatus re-upserts the box, so a transient write failure self-heals.
-	s.pUpsertBox(box)
 	for _, job := range repointed {
-		s.pUpsertJob(job)
+		s.jobs[job.ID] = job
 	}
 	if restage {
-		s.pDeleteBox(stagingLoginServer)
+		delete(s.boxes, stagingLoginServer)
 	}
 	return nil
 }
@@ -320,8 +330,12 @@ func (s *MemoryStore) SetBoxStatus(loginServer, status string) error {
 		return ErrNotFound
 	}
 	box.Status = status
+	if s.persister != nil {
+		if err := s.persister.UpsertBox(box); err != nil {
+			return fmt.Errorf("factory store: persist box status: %w", err)
+		}
+	}
 	s.boxes[loginServer] = cloneBox(box)
-	s.pUpsertBox(box)
 	return nil
 }
 
@@ -421,9 +435,13 @@ func (s *MemoryStore) SetJob(job Job) error {
 		return errors.New("factory store: job ID is required")
 	}
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.persister != nil {
+		if err := s.persister.UpsertJob(job); err != nil {
+			return fmt.Errorf("factory store: persist job: %w", err)
+		}
+	}
 	s.jobs[job.ID] = job
-	s.pUpsertJob(job)
-	s.mu.Unlock()
 	return nil
 }
 

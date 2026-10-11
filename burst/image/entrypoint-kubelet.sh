@@ -168,6 +168,15 @@ KUBECONFIGEOF
   chmod 0600 /etc/kubernetes/bootstrap-kubeconfig.yaml
   BOOT_RESP='{}'
 else
+# A joined kubelet keeps its client certificate across restarts. Its grant is
+# single-use, so reuse the response for cloud/Cilium settings on reboot.
+if [ -s /var/lib/kubelet/pki/kubelet-client-current.pem ]; then
+  BOOT_RESP='{}'
+  if [ -s /etc/kubernetes/bootstrap-response.json ]; then
+    BOOT_RESP=$(cat /etc/kubernetes/bootstrap-response.json)
+  fi
+  log_t "existing kubelet client certificate: skipping bootstrap fetch"
+else
 log_t "fetching bootstrap kubeconfig from ${BOOTSTRAP_ENDPOINT}..."
 BOOT_REQ=$(printf '{"burst_id":"%s","node_name":"%s"}' "${BURST_ID}" "${NODE_NAME}")
 if ! BOOT_RESP=$(curl -fsS -X POST -H 'Content-Type: application/json' \
@@ -186,6 +195,10 @@ echo "${BOOT_RESP}" | jq -er '.kubeconfig' | base64 -d > /etc/kubernetes/bootstr
 if [ ! -s /etc/kubernetes/bootstrap-kubeconfig.yaml ]; then
   log_t "bootstrap-kubeconfig.yaml empty after decode"
   exit 1
+fi
+
+# Keep credentials private while preserving cloud and Cilium settings on reboot.
+(umask 077; printf '%s' "${BOOT_RESP}" > /etc/kubernetes/bootstrap-response.json)
 fi
 
 # Customer cluster's cloud provider. GKE ValidatingAdmissionPolicy
@@ -253,6 +266,9 @@ if [ "${BURST_TIER}" = "full" ]; then
     chmod 0600 /etc/cilium/kubeconfig
     HOST_CILIUM=1
     log_t "tier=full: cilium-kubeconfig received; host-mode Cilium enabled"
+  elif [ "${STANDALONE}" = "0" ] && [ -s /var/lib/kubelet/pki/kubelet-client-current.pem ] && [ -s /etc/cilium/kubeconfig ]; then
+    HOST_CILIUM=1
+    log_t "tier=full: reusing existing host-mode Cilium kubeconfig"
   else
     log_t "tier=full but no cilium-kubeconfig in bootstrap; falling back to K8s DaemonSet Cilium path"
   fi
@@ -603,7 +619,8 @@ if [ "${HOST_CILIUM:-0}" = "1" ] && [ -x /usr/local/bin/cilium-agent ]; then
   log_t "fetching cilium-config ConfigMap via apiserver"
   APISERVER="$(awk '/server:/ {print $2}' /etc/cilium/kubeconfig | head -1)"
   TOKEN="$(awk '/token:/ {print $2}' /etc/cilium/kubeconfig | head -1)"
-  CM_JSON="$(curl -sS --insecure \
+  awk '/certificate-authority-data:/ {print $2; exit}' /etc/kubernetes/bootstrap-kubeconfig.yaml | base64 -d > /etc/cilium/ca.crt
+  CM_JSON="$(curl -sS --cacert /etc/cilium/ca.crt \
     -H "Authorization: Bearer $TOKEN" \
     "$APISERVER/api/v1/namespaces/kube-system/configmaps/cilium-config" 2>/dev/null || echo '{}')"
   # Parse + write each ConfigMap data key as a file in /etc/cilium-config/.

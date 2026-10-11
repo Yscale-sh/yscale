@@ -68,8 +68,9 @@ type WorkloadReconciler struct {
 
 	resyncInterval time.Duration
 
-	mu        sync.Mutex
-	submitted map[string]string // CR namespace/name -> central workload-id
+	mu             sync.Mutex
+	submitted      map[string]string // CR namespace/name -> central workload-id
+	pendingCancels map[string]string // deleted CR namespace/name -> central workload-id
 }
 
 type confirmedSubmitRejection struct{ err error }
@@ -315,13 +316,10 @@ func (r *WorkloadReconciler) rebuildSubmitted(ctx context.Context) error {
 
 // statusSyncLoop periodically mirrors central's authoritative view
 // (nodeName, live spend) onto Workload CR status. Runs on the same
-// resyncInterval as the watch resync; a Central that doesn't implement
-// WorkloadStatusReader (e.g. a test fake) turns the loop into a no-op.
+// resyncInterval as the watch resync. Cancellation retries also run here,
+// independently of live CRs or support for WorkloadStatusReader.
 func (r *WorkloadReconciler) statusSyncLoop(ctx context.Context) {
 	reader, ok := r.Central.(WorkloadStatusReader)
-	if !ok || r.Dyn == nil {
-		return
-	}
 	interval := r.resyncInterval
 	if interval <= 0 {
 		interval = 30 * time.Second
@@ -333,7 +331,18 @@ func (r *WorkloadReconciler) statusSyncLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			r.syncCentralStatus(ctx, reader)
+			r.mu.Lock()
+			pending := make(map[string]string, len(r.pendingCancels))
+			for key, id := range r.pendingCancels {
+				pending[key] = id
+			}
+			r.mu.Unlock()
+			for key, id := range pending {
+				r.cancelTracked(ctx, key, id)
+			}
+			if ok && r.Dyn != nil {
+				r.syncCentralStatus(ctx, reader)
+			}
 		}
 	}
 }
@@ -961,22 +970,38 @@ func (r *WorkloadReconciler) handleEvent(ctx context.Context, ev watch.Event) {
 	case watch.Deleted:
 		r.mu.Lock()
 		wlID := r.submitted[key]
-		delete(r.submitted, key)
-		r.mu.Unlock()
 		// Tell central to reap. Without this, a customer cancelling
 		// mid-run leaks the burst until budget.deadline (rarely set).
 		// "attempted" placeholder means we tried submit but never got
 		// an id back — nothing to cancel central-side.
 		if wlID != "" && wlID != "attempted" {
-			if err := r.Central.CancelWorkload(ctx, wlID); err != nil {
-				r.Log.Warn("cancel workload at central",
-					"workload", key, "id", wlID, "error", err)
-			} else {
-				r.Log.Info("workload cancelled at central",
-					"workload", key, "id", wlID)
+			if r.pendingCancels == nil {
+				r.pendingCancels = make(map[string]string)
 			}
+			r.pendingCancels[key] = wlID
+			r.mu.Unlock()
+			r.cancelTracked(ctx, key, wlID)
+		} else {
+			delete(r.submitted, key)
+			r.mu.Unlock()
 		}
 	}
+}
+
+func (r *WorkloadReconciler) cancelTracked(ctx context.Context, key, wlID string) {
+	if err := r.Central.CancelWorkload(ctx, wlID); err != nil {
+		r.Log.Warn("cancel workload at central", "workload", key, "id", wlID, "error", err)
+		return
+	}
+	r.mu.Lock()
+	if r.pendingCancels[key] == wlID {
+		delete(r.pendingCancels, key)
+	}
+	if r.submitted[key] == wlID {
+		delete(r.submitted, key)
+	}
+	r.mu.Unlock()
+	r.Log.Info("workload cancelled at central", "workload", key, "id", wlID)
 }
 
 // submit converts the CR's spec to YAML, POSTs to central, and

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -408,6 +409,20 @@ func (t *Tenants) Offboard(ctx context.Context, customerID string) (*OffboardRep
 			rep.BurstsReaped++
 		}
 	}
+	// Central cannot uninstall releases on the shared cluster. Preserve their
+	// cleanup coordinates in the response and operator log before deleting the
+	// registry. Read the customer directly so retries on revoked tenants also
+	// report these leftovers (the live hosted inventory excludes them).
+	for _, cluster := range cust.RegisteredClusters {
+		if cluster == nil || cluster.Source != state.ClusterSourceHosted {
+			continue
+		}
+		warning := fmt.Sprintf(
+			"hosted connector release for cluster %s (workload namespace %s) requires manual cleanup; run `helm uninstall %s --namespace yscale-system` on the shared cluster",
+			cluster.ClusterID, cluster.HostedNamespace, hostedHelmRelease(cluster.ClusterID))
+		rep.Warnings = append(rep.Warnings, warning)
+		t.Log.Warn("tenant offboard left hosted connector release", "customer", customerID, "warning", warning)
+	}
 
 	// 3. Tear down the tenant's dedicated fabric. When the factory is wired the
 	// delete is dispatched UNCONDITIONALLY — even before a Mesh ref is attached —
@@ -476,8 +491,12 @@ func (t *Tenants) Offboard(ctx context.Context, customerID string) (*OffboardRep
 func (t *Tenants) HandleProvision(w http.ResponseWriter, r *http.Request) {
 	var opts ProvisionOpts
 	if r.Body != nil {
-		// Body is optional; ignore a decode error on an empty/absent body.
-		_ = json.NewDecoder(r.Body).Decode(&opts)
+		// Body is optional, but malformed or partially decoded options must
+		// never reach the provisioning side effects.
+		if err := json.NewDecoder(r.Body).Decode(&opts); err != nil && !errors.Is(err, io.EOF) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid provisioning JSON"})
+			return
+		}
 	}
 	res, err := t.Provision(opts)
 	if err != nil {

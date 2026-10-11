@@ -456,18 +456,18 @@ func (w *IdleNodeWatcher) occupiedNodes(ctx context.Context) (occupied map[strin
 //
 // DaemonSet pods and mirror pods are infrastructure: they follow the node rather
 // than keeping it, and every burst node carries some, so counting them would
-// mean no node is ever idle. A pod already terminating is not work either — the
-// thing that deleted it has moved on, and waiting for it to disappear would just
-// mean waiting out its grace period. Succeeded and Failed pods are finished.
+// mean no node is ever idle. Terminating workloads still need their grace
+// period, and Unknown workloads may still be running. Non-terminating
+// Succeeded and Failed pods are finished.
 func podOccupiesNode(pod *corev1.Pod) bool {
-	if pod.DeletionTimestamp != nil {
-		return false
-	}
 	if isDaemonSetPod(pod) || isMirrorPod(pod) {
 		return false
 	}
+	if pod.DeletionTimestamp != nil {
+		return true
+	}
 	switch pod.Status.Phase {
-	case corev1.PodPending, corev1.PodRunning:
+	case corev1.PodPending, corev1.PodRunning, corev1.PodUnknown:
 		return true
 	}
 	return false

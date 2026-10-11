@@ -62,9 +62,11 @@ type CompletionWatcher struct {
 	ArtifactTimeout     time.Duration
 
 	mu              sync.Mutex
-	reported        map[string]bool // workload-id -> completion reported (per process lifetime)
-	startedReported map[string]bool // workload-id -> start reported (per process lifetime)
-	finishing       map[string]bool // workload-id -> artifact upload is in progress
+	reported        map[string]bool         // workload-id -> completion reported (per process lifetime)
+	startedReported map[string]bool         // workload-id -> start reported (per process lifetime)
+	finishing       map[string]bool         // workload-id -> artifact upload is in progress
+	observed        map[string]*batchv1.Job // last unreported observation, retained after deletion
+	deleted         map[string]bool         // workload-id -> Job deleted, completion still pending
 }
 
 // NewCompletionWatcher wires the watcher. central is how it reports
@@ -82,6 +84,8 @@ func NewCompletionWatcher(k8s kubernetes.Interface, dyn dynamic.Interface, centr
 		reported:        make(map[string]bool),
 		startedReported: make(map[string]bool),
 		finishing:       make(map[string]bool),
+		observed:        make(map[string]*batchv1.Job),
+		deleted:         make(map[string]bool),
 		ArtifactTimeout: 20 * time.Minute,
 	}
 }
@@ -113,8 +117,8 @@ func (cw *CompletionWatcher) Run(ctx context.Context) error {
 }
 
 // resyncLoop periodically re-lists all yscale Jobs and re-drives handle() on
-// each, so a terminal-but-unreported Job (report failed, or a watch.Deleted the
-// watch loop ignores) is retried within resyncInterval instead of lingering.
+// each, and retries retained deleted Jobs, so a failed report is retried within
+// resyncInterval even after the Job expires.
 func (cw *CompletionWatcher) resyncLoop(ctx context.Context) {
 	t := time.NewTicker(resyncInterval)
 	defer t.Stop()
@@ -132,6 +136,15 @@ func (cw *CompletionWatcher) resyncLoop(ctx context.Context) {
 // idempotent (reported/startedReported guards + terminal-only completion), so
 // re-running it only retries what a prior report failed to deliver.
 func (cw *CompletionWatcher) resync(ctx context.Context) {
+	cw.mu.Lock()
+	var deleted []*batchv1.Job
+	for id := range cw.deleted {
+		deleted = append(deleted, cw.observed[id].DeepCopy())
+	}
+	cw.mu.Unlock()
+	for _, job := range deleted {
+		cw.handleDeleted(ctx, job)
+	}
 	jobs, err := cw.K8s.BatchV1().Jobs(cw.Namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: labelWorkloadID,
 	})
@@ -164,9 +177,44 @@ func (cw *CompletionWatcher) runOnce(ctx context.Context) error {
 			job, isJob := ev.Object.(*batchv1.Job)
 			if isJob && (ev.Type == watch.Added || ev.Type == watch.Modified) {
 				cw.handle(ctx, job)
+			} else if isJob && ev.Type == watch.Deleted {
+				cw.handleDeleted(ctx, job)
 			}
 		}
 	}
+}
+
+// handleDeleted retains the final observation until central accepts it. A Job
+// can expire after a failed report, so subsequent retries cannot require a GET.
+func (cw *CompletionWatcher) handleDeleted(ctx context.Context, job *batchv1.Job) {
+	wlID := job.Labels[labelWorkloadID]
+	if wlID == "" {
+		return
+	}
+	cw.mu.Lock()
+	if cw.reported[wlID] {
+		cw.mu.Unlock()
+		return
+	}
+	if previous := cw.observed[wlID]; previous != nil && jobPhase(job) == "" && jobPhase(previous) != "" {
+		job = previous
+	}
+	cw.observed[wlID] = job.DeepCopy()
+	cw.deleted[wlID] = true
+	finishing := cw.finishing[wlID]
+	cw.mu.Unlock()
+	if finishing {
+		return
+	}
+	if jobPhase(job) != "" {
+		cw.handle(ctx, job)
+		return
+	}
+	// Central's terminal phases are Succeeded/Failed. Surface the uncertainty
+	// explicitly in the receipt instead of claiming successful completion.
+	outcome := jobOutcome(job, "Failed")
+	outcome.Compute.Reason = "completion-unknown: job deleted before terminal status was observed"
+	cw.reportDone(ctx, job, wlID, "Failed", outcome)
 }
 
 // handle reports a Job to central if it has reached a terminal state
@@ -178,6 +226,11 @@ func (cw *CompletionWatcher) handle(ctx context.Context, job *batchv1.Job) {
 	if wlID == "" {
 		return
 	}
+	cw.mu.Lock()
+	if !cw.reported[wlID] && !cw.deleted[wlID] {
+		cw.observed[wlID] = job.DeepCopy()
+	}
+	cw.mu.Unlock()
 	phase := jobPhase(job)
 	if phase == "" {
 		// Still running. Report the start once so central stamps StartedAt.
@@ -219,6 +272,8 @@ func (cw *CompletionWatcher) reportDone(ctx context.Context, job *batchv1.Job, w
 
 	cw.mu.Lock()
 	cw.reported[wlID] = true
+	delete(cw.observed, wlID)
+	delete(cw.deleted, wlID)
 	cw.mu.Unlock()
 	cw.Log.Info("reported workload completion",
 		"workload", wlID, "phase", phase, "job", job.Name)

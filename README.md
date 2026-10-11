@@ -76,6 +76,10 @@ but this source release does not activate a hosted service.
 - **Unqualified paths.** Hosted multi-tenant operation, GCP and Azure bursts,
   AWS GPU bursts and the LKE/EKS/GKE/AKS target variants have no live
   qualification in this release; treat them as experimental.
+- **Persistent storage is reserved, not mounted.** `spec.storage.persistent`
+  is validated and reserved by central, but the burst Job does not yet mount
+  it. Do not rely on it for durability in this preview; use cache or artifact
+  storage.
 - **Test tooling is destructive by tag.** `scripts/sweep-test-leaks.sh` and the
   Headscale e2e scripts delete by owner tag or name prefix. Run them only
   against accounts dedicated to testing.

@@ -27,7 +27,9 @@ agent/internal/agent/artifact_completion_test.go
 agent/internal/agent/artifact_uploader.go
 agent/internal/agent/artifact_uploader_test.go
 agent/internal/agent/bootstrap.go
+agent/internal/agent/bootstrap_entrypoint_test.go
 agent/internal/agent/bootstrap_gpu_test.go
+agent/internal/agent/bootstrap_single_use_test.go
 agent/internal/agent/bootstrap_test.go
 agent/internal/agent/cache_signer_integration_test.go
 agent/internal/agent/client.go
@@ -50,6 +52,7 @@ agent/internal/agent/heartbeat_inventory_test.go
 agent/internal/agent/idempotency.go
 agent/internal/agent/idle_node_watcher.go
 agent/internal/agent/idle_node_watcher_test.go
+agent/internal/agent/lifecycle_review_test.go
 agent/internal/agent/listen.go
 agent/internal/agent/listen_test.go
 agent/internal/agent/node_gc.go
@@ -79,6 +82,7 @@ burst/image/Dockerfile.kubelet
 burst/image/Dockerfile.kubelet.base
 burst/image/entrypoint-kubelet.sh
 burst/image/entrypoint.sh
+burst/image/entrypoint_kubelet_test.go
 central/build/Dockerfile.cloud
 central/build/Dockerfile.cloud.buildkit
 central/build/Dockerfile.hosted-controller.buildkit
@@ -216,6 +220,7 @@ central/internal/handlers/tenants_hosted.go
 central/internal/handlers/tenants_hosted_inventory_test.go
 central/internal/handlers/tenants_hosted_test.go
 central/internal/handlers/tenants_namespaces_test.go
+central/internal/handlers/tenants_review_test.go
 central/internal/handlers/tenants_test.go
 central/internal/handlers/workload_cancellation_integration_test.go
 central/internal/handlers/workload_origin.go
@@ -337,6 +342,7 @@ central/internal/state/cloud_accounts.go
 central/internal/state/cloud_accounts_test.go
 central/internal/state/cluster_policy_test.go
 central/internal/state/clusters.go
+central/internal/state/clusters_persistence_test.go
 central/internal/state/clusters_test.go
 central/internal/state/connector_command_delivery.go
 central/internal/state/connector_commands.go
@@ -356,6 +362,7 @@ central/internal/state/first_workspace.go
 central/internal/state/first_workspace_integration_test.go
 central/internal/state/gateway_routes.go
 central/internal/state/gateway_routes_lifecycle_test.go
+central/internal/state/gateway_routes_persistence_test.go
 central/internal/state/gateway_routes_test.go
 central/internal/state/gitops.go
 central/internal/state/gitops_test.go
@@ -584,6 +591,7 @@ factory/cmd/yscale-factory/main.go
 factory/internal/boxes/linode.go
 factory/internal/boxes/linode_http.go
 factory/internal/boxes/linode_http_test.go
+factory/internal/boxes/linode_regression_test.go
 factory/internal/boxes/linode_test.go
 factory/internal/boxes/ops_login_test.go
 factory/internal/boxes/worker.go
@@ -596,6 +604,7 @@ factory/internal/registrar/ops_test.go
 factory/internal/store/postgres.go
 factory/internal/store/postgres_test.go
 factory/internal/store/store.go
+factory/internal/store/store_regression_test.go
 factory/internal/store/store_test.go
 go.mod
 go.sum
@@ -700,6 +709,7 @@ pkg/backends/azure/azure.go
 pkg/backends/azure/azure_test.go
 pkg/backends/azure/bootstrap.sh
 pkg/backends/azure/network.go
+pkg/backends/azure/ownership_test.go
 pkg/backends/create_outcome.go
 pkg/backends/create_outcome_test.go
 pkg/backends/flyio/flyio.go

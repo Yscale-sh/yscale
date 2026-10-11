@@ -167,11 +167,11 @@ func (s *Store) SetCustomerGatewayRoutes(customerID, clusterID string, routes []
 	}
 	// Copy-on-write, both halves: the snapshot below and any CustomerByID
 	// caller share this record's map header until it is replaced.
-	c.GatewayRoutesByCluster = byCluster
-	c.GatewayRoutes = union
 	snapshot := *c
+	snapshot.GatewayRoutesByCluster = byCluster
+	snapshot.GatewayRoutes = union
 	s.mu.Unlock()
-	if err := s.pUpsertCustomer(&snapshot); err != nil {
+	if err := s.persistGatewayRoutes(c, &snapshot); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -210,10 +210,10 @@ func (s *Store) SetCustomerPushedGatewayRoutes(customerID string, routes []strin
 		s.mu.Unlock()
 		return fmt.Errorf("invalid pushed gateway route CIDR %q", invalid[0])
 	}
-	c.PushedGatewayRoutes = append([]string(nil), incoming...)
 	snapshot := *c
+	snapshot.PushedGatewayRoutes = append([]string(nil), incoming...)
 	s.mu.Unlock()
-	return s.pUpsertCustomer(&snapshot)
+	return s.persistGatewayRoutes(c, &snapshot)
 }
 
 // SetCustomerPushedClusterGatewayRoutes records the exact set successfully
@@ -247,10 +247,10 @@ func (s *Store) SetCustomerPushedClusterGatewayRoutes(customerID, clusterID stri
 		s.mu.Unlock()
 		return nil
 	}
-	c.PushedGatewayRoutesByCluster = pushed
 	snapshot := *c
+	snapshot.PushedGatewayRoutesByCluster = pushed
 	s.mu.Unlock()
-	return s.pUpsertCustomer(&snapshot)
+	return s.persistGatewayRoutes(c, &snapshot)
 }
 
 // ClearCustomerPushedClusterGatewayRoutes drops ONE cluster's pushed-gateway
@@ -282,10 +282,10 @@ func (s *Store) ClearCustomerPushedClusterGatewayRoutes(customerID, clusterID st
 	if len(pushed) == 0 {
 		pushed = nil
 	}
-	c.PushedGatewayRoutesByCluster = pushed
 	snapshot := *c
+	snapshot.PushedGatewayRoutesByCluster = pushed
 	s.mu.Unlock()
-	return s.pUpsertCustomer(&snapshot)
+	return s.persistGatewayRoutes(c, &snapshot)
 }
 
 // ReapUnheldClusterGatewayRoutes reaps the DESIRED gateway routes of the named
@@ -349,14 +349,31 @@ func (s *Store) ReapUnheldClusterGatewayRoutes(customerID string, clusterIDs []s
 		return nil, nil
 	}
 	byCluster, union := dropClusterGatewayRoutesLocked(c, pruned)
-	c.GatewayRoutesByCluster = byCluster
-	c.GatewayRoutes = union
 	snapshot := *c
+	snapshot.GatewayRoutesByCluster = byCluster
+	snapshot.GatewayRoutes = union
 	s.mu.Unlock()
-	if err := s.pUpsertCustomer(&snapshot); err != nil {
+	if err := s.persistGatewayRoutes(c, &snapshot); err != nil {
 		return nil, err
 	}
 	return pruned, nil
+}
+
+// Callers hold custMu, but not mu. Publish only after persistence succeeds so
+// failed writes leave retryable intent and withdrawal records in memory.
+func (s *Store) persistGatewayRoutes(c, snapshot *Customer) error {
+	if err := s.pUpsertCustomer(snapshot); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.customers[c.ID] == c {
+		c.GatewayRoutesByCluster = snapshot.GatewayRoutesByCluster
+		c.GatewayRoutes = snapshot.GatewayRoutes
+		c.PushedGatewayRoutesByCluster = snapshot.PushedGatewayRoutesByCluster
+		c.PushedGatewayRoutes = snapshot.PushedGatewayRoutes
+	}
+	return nil
 }
 
 // ConsumeUnheldRouteClusters names, per customer, every cluster holding stored

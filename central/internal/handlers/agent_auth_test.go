@@ -1,9 +1,130 @@
 package handlers
 
 import (
+	"context"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
+	"time"
+
+	"github.com/yscale-sh/yscale/central/internal/mesh"
+	"github.com/yscale-sh/yscale/central/internal/state"
 )
+
+type authMintProvider struct {
+	fakeMeshProvider
+	mu        sync.Mutex
+	calls     []string
+	mintErr   error
+	deleteErr error
+}
+
+func (p *authMintProvider) record(call string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.calls = append(p.calls, call)
+}
+
+func (p *authMintProvider) MintAuthKeyEphemeral(_ context.Context, _ []string, _ time.Duration, _ bool) (string, error) {
+	p.record("mint")
+	if p.mintErr != nil {
+		return "", p.mintErr
+	}
+	return "tskey-auth-test", nil
+}
+
+func (p *authMintProvider) FindDeviceByHostname(_ context.Context, hostname string) (string, error) {
+	p.record("find:" + hostname)
+	return "existing-device", nil
+}
+
+func (p *authMintProvider) DeleteDevice(_ context.Context, deviceID string) error {
+	p.record("delete:" + deviceID)
+	return p.deleteErr
+}
+
+func TestMintKey_ConcurrentTenantsOnlyWinnerMints(t *testing.T) {
+	const tenants = 32
+	for round := 0; round < 100; round++ {
+		prov := &authMintProvider{}
+		h := &AgentAuth{
+			Store: state.New(), Log: quietLog(),
+			BoxProvider: func(string, string, string) mesh.Provider { return prov },
+		}
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		statuses := make([]int, tenants)
+		customers := make([]*state.Customer, tenants)
+		for i := range customers {
+			customers[i] = &state.Customer{ID: fmt.Sprintf("tenant-%d", i), Mesh: &state.MeshEndpoint{}}
+			h.Store.AddCustomer(customers[i])
+			wg.Add(1)
+			go func(i int) {
+				defer wg.Done()
+				<-start
+				statuses[i] = callMint(h, customers[i], "shared-cluster").Code
+			}(i)
+		}
+		close(start)
+		wg.Wait()
+		owner, ok := h.clusterSeen.Load("shared-cluster")
+		if !ok {
+			t.Fatal("no tenant claimed the cluster")
+		}
+		for i, status := range statuses {
+			want := http.StatusForbidden
+			if customers[i].ID == owner {
+				want = http.StatusOK
+			}
+			if status != want {
+				t.Fatalf("round %d: tenant %s status = %d, want %d (owner %s)", round, customers[i].ID, status, want, owner)
+			}
+		}
+		if len(prov.calls) != 3 {
+			t.Fatalf("provider calls = %v, want one mint and cleanup", prov.calls)
+		}
+	}
+}
+
+func TestMintKey_MintBeforeDeviceCleanup(t *testing.T) {
+	for _, kind := range []string{"agent", "gateway"} {
+		for _, outcome := range []string{"mint failure", "success", "delete failure"} {
+			t.Run(kind+"/"+outcome, func(t *testing.T) {
+				prov := &authMintProvider{}
+				wantStatus := http.StatusOK
+				wantCalls := []string{"mint", "find:yscale-" + kind + "-cluster", "delete:existing-device"}
+				if outcome == "mint failure" {
+					prov.mintErr = errors.New("mint unavailable")
+					wantStatus = http.StatusBadGateway
+					wantCalls = []string{"mint"}
+				}
+				if outcome == "delete failure" {
+					prov.deleteErr = errors.New("delete unavailable")
+				}
+				h := &AgentAuth{
+					Store: state.New(), Log: quietLog(),
+					BoxProvider: func(string, string, string) mesh.Provider { return prov },
+				}
+				cust := &state.Customer{ID: "tenant", Mesh: &state.MeshEndpoint{}}
+				req := httptest.NewRequest(http.MethodPost, "/v1/agent/ts-auth-key", strings.NewReader(`{"kind":"`+kind+`"}`))
+				req.Header.Set(clusterIDHeader, "cluster")
+				rec := httptest.NewRecorder()
+				h.MintKey(rec, req.WithContext(context.WithValue(req.Context(), ctxCustomer, cust)))
+				if rec.Code != wantStatus {
+					t.Fatalf("status = %d, want %d: %s", rec.Code, wantStatus, rec.Body)
+				}
+				if !slices.Equal(prov.calls, wantCalls) {
+					t.Fatalf("provider calls = %v, want %v", prov.calls, wantCalls)
+				}
+			})
+		}
+	}
+}
 
 func TestDeviceKindSpec(t *testing.T) {
 	t.Parallel()

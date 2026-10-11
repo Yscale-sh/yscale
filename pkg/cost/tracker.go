@@ -185,8 +185,16 @@ func (t *Tracker) CapReached() bool {
 	if t.capUSD <= 0 {
 		return false
 	}
-	t.maybeRolloverLocked(t.now())
-	return t.monthSpentUSD >= t.capUSD
+	now := t.now()
+	t.maybeRolloverLocked(now)
+	spent := t.monthSpentUSD
+	for _, run := range t.active {
+		hours := now.Sub(run.startedAt).Hours()
+		if hours > 0 {
+			spent += run.usdPerHour * hours
+		}
+	}
+	return spent >= t.capUSD
 }
 
 // Snapshot returns a consistent view of tracker state, including the running

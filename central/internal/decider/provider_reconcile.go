@@ -102,7 +102,7 @@ func (d *Decider) protectedProviderResources(ctx context.Context) (map[string]bo
 	}
 	protected := make(map[string]bool, len(refs))
 	for _, ref := range refs {
-		protected[providerResourceKey(ref.Provider, ref.CloudAccountID, ref.ProviderResourceID)] = true
+		protected[providerProtectionKey(ref.Provider, ref.CloudAccountID, ref.ProviderResourceID)] = true
 	}
 	if d.store == nil {
 		return protected, nil
@@ -118,7 +118,7 @@ func (d *Decider) protectedProviderResources(ctx context.Context) (map[string]bo
 		if b == nil || b.BackendID == "" {
 			continue
 		}
-		protected[providerResourceKey(b.Backend, b.CloudAccountID, b.BackendID)] = true
+		protected[providerProtectionKey(b.Backend, b.CloudAccountID, b.BackendID)] = true
 	}
 	return protected, nil
 }
@@ -229,7 +229,7 @@ func (d *Decider) reconcileProviderTarget(ctx context.Context, target providerIn
 		ref := lifecycle.ProviderResourceRef{
 			Provider: target.provider, CloudAccountID: target.cloudAccountID, ProviderResourceID: node.BackendID,
 		}
-		key := providerResourceKey(ref.Provider, ref.CloudAccountID, ref.ProviderResourceID)
+		key := providerProtectionKey(ref.Provider, ref.CloudAccountID, ref.ProviderResourceID)
 		if protected[key] {
 			continue
 		}
@@ -281,7 +281,7 @@ func (d *Decider) reconcileProviderTarget(ctx context.Context, target providerIn
 			summary.Failed++
 			return summary, err
 		}
-		protected[providerResourceKey(ref.Provider, ref.CloudAccountID, ref.ProviderResourceID)] = true
+		protected[providerProtectionKey(ref.Provider, ref.CloudAccountID, ref.ProviderResourceID)] = true
 		summary.Deleted++
 	}
 	absentDeleted, err := d.reconciliation.ReconcileProviderOrphansAbsent(ctx, target.provider, target.cloudAccountID, observedIDs, startedAt)
@@ -353,7 +353,7 @@ func (d *Decider) correlateProviderCreates(ctx context.Context, target providerI
 	}
 	for _, create := range creates {
 		if create.ProviderResourceID != "" {
-			key := providerResourceKey(create.Provider, create.CloudAccountID, create.ProviderResourceID)
+			key := providerProtectionKey(create.Provider, create.CloudAccountID, create.ProviderResourceID)
 			protected[key] = true
 			continue
 		}
@@ -368,7 +368,7 @@ func (d *Decider) correlateProviderCreates(ctx context.Context, target providerI
 		}
 		if create.State == lifecycle.OperationProcessing && !create.LeaseExpired {
 			for _, match := range matches {
-				key := providerResourceKey(target.provider, target.cloudAccountID, match.BackendID)
+				key := providerProtectionKey(target.provider, target.cloudAccountID, match.BackendID)
 				protected[key] = true
 			}
 			continue
@@ -378,7 +378,7 @@ func (d *Decider) correlateProviderCreates(ctx context.Context, target providerI
 		}
 		if len(matches) > 1 {
 			for _, match := range matches {
-				ambiguous[providerResourceKey(target.provider, target.cloudAccountID, match.BackendID)] = true
+				ambiguous[providerProtectionKey(target.provider, target.cloudAccountID, match.BackendID)] = true
 			}
 			opts.Log.Warn("expired provider-create has multiple exact-owned candidates; retaining quarantine",
 				"provider", target.provider, "cloud_account_id", target.cloudAccountID,
@@ -403,13 +403,23 @@ func (d *Decider) correlateProviderCreates(ctx context.Context, target providerI
 			return ambiguous, errors.Join(err, d.recordProviderInventoryFailure(ctx, opts, target.provider, target.cloudAccountID,
 				"provider_create_reconcile_failed", err))
 		}
-		key := providerResourceKey(target.provider, target.cloudAccountID, match.BackendID)
+		key := providerProtectionKey(target.provider, target.cloudAccountID, match.BackendID)
 		protected[key] = true
 		opts.Log.Warn("expired provider-create reconciled to exact-owned resource",
 			"provider", target.provider, "cloud_account_id", target.cloudAccountID,
 			"operation_id", create.ID, "resource_id", match.BackendID)
 	}
 	return ambiguous, nil
+}
+
+// Linode instance IDs identify the provider resource globally. Distinct local
+// account records (including the platform account) can share credentials and
+// inventory, so none may sweep an instance protected by another account.
+func providerProtectionKey(provider, cloudAccountID, providerResourceID string) string {
+	if provider == backends.TypeLinode {
+		cloudAccountID = ""
+	}
+	return providerResourceKey(provider, cloudAccountID, providerResourceID)
 }
 
 func providerResourceKey(provider, cloudAccountID, providerResourceID string) string {

@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
@@ -194,6 +195,7 @@ func TestDrainFallsBackToDeleteInTheWorkloadNamespace(t *testing.T) {
 	recordEvictions(k8s, apierrors.NewInternalError(errors.New("eviction webhook unavailable")))
 	h := NewRealHandler(k8s, nil, discardLogger())
 	h.WorkloadNamespace = "ys-cust-hosted-demo"
+	h.DrainTimeout = 10 * time.Millisecond
 
 	if err := h.drainAndDeleteNode(context.Background(), drainNodeName, false); err != nil {
 		t.Fatalf("drainAndDeleteNode: %v", err)
@@ -215,6 +217,7 @@ func TestDrainReportsFallbackDeleteFailure(t *testing.T) {
 	})
 	h := NewRealHandler(k8s, nil, discardLogger())
 	h.WorkloadNamespace = "ys-cust-hosted-demo"
+	h.DrainTimeout = 10 * time.Millisecond
 
 	err := h.drainAndDeleteNode(context.Background(), drainNodeName, false)
 	if err == nil || !strings.Contains(err.Error(), "delete pod ys-cust-hosted-demo/job-pod") {

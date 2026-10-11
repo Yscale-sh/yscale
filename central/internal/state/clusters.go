@@ -839,6 +839,7 @@ func (s *Store) ClaimAgentCluster(customerID, clusterID string, requireRegistere
 	}
 	rows := copyRegisteredClusters(c.RegisteredClusters)
 	var row *RegisteredCluster
+	snapshot := *c
 	if existing == nil {
 		if requireRegistered {
 			s.mu.Unlock()
@@ -855,11 +856,8 @@ func (s *Store) ClaimAgentCluster(customerID, clusterID string, requireRegistere
 			}
 			pruned := rows[victim]
 			rows = append(rows[:victim], rows[victim+1:]...)
-			if s.clusterOwners[pruned.ClusterID] == customerID {
-				delete(s.clusterOwners, pruned.ClusterID)
-			}
 			prunedCluster = pruned.ClusterID
-			c.GatewayRoutesByCluster, c.GatewayRoutes =
+			snapshot.GatewayRoutesByCluster, snapshot.GatewayRoutes =
 				dropClusterGatewayRoutesLocked(c, []string{prunedCluster})
 		}
 		claimed = true
@@ -878,13 +876,23 @@ func (s *Store) ClaimAgentCluster(customerID, clusterID string, requireRegistere
 	}
 	last := at
 	row.LastConnectedAt = &last
-	c.RegisteredClusters = rows
-	s.clusterOwners[clusterID] = customerID
-	snapshot := *c
+	snapshot.RegisteredClusters = rows
 	s.mu.Unlock()
 	if err := s.pUpsertCustomer(&snapshot); err != nil {
 		return false, "", err
 	}
+	// Ownership, registry rows, and pruned routes must advance together only
+	// after the durable write; a failed claim must remain safe to retry.
+	s.mu.Lock()
+	if s.customers[customerID] == c {
+		c.RegisteredClusters = snapshot.RegisteredClusters
+		c.GatewayRoutesByCluster, c.GatewayRoutes = snapshot.GatewayRoutesByCluster, snapshot.GatewayRoutes
+		if prunedCluster != "" && s.clusterOwners[prunedCluster] == customerID {
+			delete(s.clusterOwners, prunedCluster)
+		}
+		s.clusterOwners[clusterID] = customerID
+	}
+	s.mu.Unlock()
 	return claimed, prunedCluster, nil
 }
 

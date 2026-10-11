@@ -1,15 +1,22 @@
 package agent
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"net"
+	"net/url"
 	"testing"
 
 	certv1 "k8s.io/api/certificates/v1"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes/fake"
 )
 
 // TestEligibilityPolicy pins the only policy decision the auto-
@@ -38,7 +45,7 @@ func TestEligibilityPolicy(t *testing.T) {
 		}
 	}
 
-	approver := &CSRApprover{Group: yscaleGroup, NodePrefix: nodePrefix}
+	approver := &CSRApprover{Group: yscaleGroup, NodePrefix: nodePrefix, K8s: fake.NewSimpleClientset(&corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "ys-burst-abc123"}})}
 
 	cases := []struct {
 		name string
@@ -98,7 +105,7 @@ func TestEligibilityPolicy(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := approver.eligible(c.csr); got != c.want {
+			if got := approver.eligible(context.Background(), c.csr); got != c.want {
 				t.Errorf("eligible(%s) = %v, want %v", c.name, got, c.want)
 			}
 		})
@@ -170,7 +177,7 @@ func TestEligibilityPolicy_GKEMode(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := approver.eligible(c.csr); got != c.want {
+			if got := approver.eligible(context.Background(), c.csr); got != c.want {
 				t.Errorf("eligible(%s) = %v, want %v", c.name, got, c.want)
 			}
 		})
@@ -195,7 +202,7 @@ func TestEligibilityPolicy_DefaultModeRejectsGKEUsernames(t *testing.T) {
 			SignerName: certv1.KubeAPIServerClientKubeletSignerName,
 		},
 	}
-	if approver.eligible(csr) {
+	if approver.eligible(context.Background(), csr) {
 		t.Error("default mode (GKEMode=false) should not approve GKE-style SA usernames")
 	}
 }
@@ -227,4 +234,65 @@ func mustCSRPEM(t *testing.T, cn string) []byte {
 		t.Fatal(err)
 	}
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: der})
+}
+
+func TestServingCSRNodeSANs(t *testing.T) {
+	const nodeName = "ys-burst-abc123"
+	for _, tc := range []struct {
+		name        string
+		dns         []string
+		ips         []net.IP
+		emails      []string
+		uris        []*url.URL
+		missingNode bool
+		want        bool
+	}{
+		{name: "node name", dns: []string{nodeName}, want: true},
+		{name: "known addresses", dns: []string{"host.internal", "host.example"}, ips: []net.IP{net.ParseIP("100.64.0.2"), net.ParseIP("203.0.113.2"), net.ParseIP("2001:db8::2")}, want: true},
+		{name: "unrelated DNS", dns: []string{nodeName, "kubernetes.default.svc"}},
+		{name: "unrelated IP", ips: []net.IP{net.ParseIP("100.64.0.2"), net.ParseIP("10.43.0.1")}},
+		{name: "missing node", dns: []string{nodeName}, missingNode: true},
+		{name: "email SAN", emails: []string{"admin@example.com"}},
+		{name: "URI SAN", uris: []*url.URL{{Scheme: "spiffe", Host: "other-node"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var objects []runtime.Object
+			if !tc.missingNode {
+				objects = append(objects, &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: nodeName}, Status: corev1.NodeStatus{Addresses: []corev1.NodeAddress{
+					{Type: corev1.NodeHostName, Address: "host.internal"},
+					{Type: corev1.NodeExternalDNS, Address: "host.example"},
+					{Type: corev1.NodeInternalIP, Address: "100.64.0.2"},
+					{Type: corev1.NodeExternalIP, Address: "203.0.113.2"},
+					{Type: corev1.NodeInternalIP, Address: "2001:0db8:0:0:0:0:0:2"},
+				}}})
+			}
+			priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+			if err != nil {
+				t.Fatal(err)
+			}
+			der, err := x509.CreateCertificateRequest(rand.Reader, &x509.CertificateRequest{
+				Subject: pkix.Name{CommonName: "system:node:" + nodeName}, DNSNames: tc.dns, IPAddresses: tc.ips, EmailAddresses: tc.emails, URIs: tc.uris,
+			}, priv)
+			if err != nil {
+				t.Fatal(err)
+			}
+			csr := &certv1.CertificateSigningRequest{ObjectMeta: metav1.ObjectMeta{Name: "serving"}, Spec: certv1.CertificateSigningRequestSpec{
+				Request:    pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: der}),
+				SignerName: certv1.KubeletServingSignerName, Username: "system:node:" + nodeName, Groups: []string{nodesGroup},
+			}}
+			objects = append(objects, csr)
+			kube := fake.NewSimpleClientset(objects...)
+			approver := NewCSRApprover(kube, nil)
+			if err := approver.tick(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			got, err := kube.CertificatesV1().CertificateSigningRequests().Get(context.Background(), csr.Name, metav1.GetOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if approved := alreadyDecided(got); approved != tc.want {
+				t.Fatalf("approved = %v, want %v", approved, tc.want)
+			}
+		})
+	}
 }

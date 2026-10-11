@@ -182,9 +182,9 @@ type MintAuthKeyResponse struct {
 //  2. Parse optional JSON body for `kind` (defaults to "agent").
 //  3. Resolve clusterID from X-Cluster-ID header or the connected agent.
 //  4. Compute hostname + tag via deviceKindSpec.
-//  5. Best-effort delete any existing tailnet device with that exact
+//  5. Mint a fresh auth key tagged for this kind.
+//  6. Best-effort delete any existing tailnet device with that exact
 //     hostname (so MagicDNS resolves THIS device, not a `-2` suffix).
-//  6. Mint a fresh auth key tagged for this kind.
 //  7. Return JSON.
 func (h *AgentAuth) MintKey(w http.ResponseWriter, r *http.Request) {
 	cust, err := CustomerFromContext(r.Context())
@@ -269,7 +269,12 @@ func (h *AgentAuth) MintKey(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "platform-managed hosted cluster requires its connector credential", http.StatusForbidden)
 		return
 	}
-	h.clusterSeen.LoadOrStore(clusterID, cust.ID)
+	if owner, _ := h.clusterSeen.LoadOrStore(clusterID, cust.ID); owner != cust.ID {
+		h.Log.Warn("rejected cross-tenant cluster id in ts-auth-key mint",
+			"customer", cust.ID, "cluster", clusterID, "owner", owner, "kind", req.Kind)
+		http.Error(w, "cluster id is registered to another tenant", http.StatusForbidden)
+		return
+	}
 
 	hostname, tag, err := deviceKindSpec(req.Kind, clusterID)
 	if err != nil {
@@ -299,24 +304,24 @@ func (h *AgentAuth) MintKey(w http.ResponseWriter, r *http.Request) {
 	// accumulate). So every key this handler mints is non-ephemeral.
 	const ephemeral = false
 
-	// mintOn runs the full mint against ONE provider: a best-effort delete of
-	// any stale device with this EXACT hostname (so MagicDNS resolves THIS
-	// device, not a `-2` suffix), then the key mint. Bounded scope: only
-	// matches this kind's hostname, never another kind's — so kind=gateway can
-	// never disturb the agent's device, and vice versa. Running it inside the
-	// mint closure means a box→Tailscale fallback cleans up and mints on
-	// the provider it actually lands on.
+	// Mint before deleting the old device so a failed mint leaves it connected.
+	// Cleanup only matches this kind's exact hostname, never another kind's,
+	// and finishes before the caller can register using the new key.
 	mintOn := func(p mesh.Provider) (string, error) {
+		key, err := p.MintAuthKeyEphemeral(ctx, []string{tag}, tsKeyExpiry, ephemeral)
+		if err != nil {
+			return "", err
+		}
 		if dev, err := p.FindDeviceByHostname(ctx, hostname); err == nil && dev != "" {
 			if err := p.DeleteDevice(ctx, dev); err != nil {
 				h.Log.Warn("stale tailnet device delete failed (continuing)",
 					"hostname", hostname, "device", dev, "error", err)
 			} else {
-				h.Log.Info("deleted stale tailnet device before re-mint",
+				h.Log.Info("deleted stale tailnet device after re-mint",
 					"hostname", hostname, "device", dev)
 			}
 		}
-		return p.MintAuthKeyEphemeral(ctx, []string{tag}, tsKeyExpiry, ephemeral)
+		return key, nil
 	}
 
 	// Fail closed (#58): mint ONLY on the tenant's own mesh; no shared-tailnet

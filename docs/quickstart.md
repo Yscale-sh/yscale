@@ -203,6 +203,12 @@ helm upgrade --install yscale-agent ./deploy/helm/yscale-agent \
 kubectl -n yscale-system rollout status deployment/yscale-agent-yscale-agent
 ```
 
+The gateway pod sets the `net.ipv4.ip_forward` sysctl, which Kubernetes 1.29+
+allows by default. If the pod is rejected with a forbidden-sysctl error (older
+Kubernetes or a restricted kubelet), set
+`gateway.enableForwardingViaInitContainer=true` in your values to use the
+privileged init container instead.
+
 Central logs `agent connected` and `gateway node routes approved`. More options:
 [Cluster Connector](cluster-connector.md) and [operator setup](self-hosted-mesh.md).
 

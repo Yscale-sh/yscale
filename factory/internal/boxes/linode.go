@@ -6,7 +6,6 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"log"
 	"net/url"
 	"os"
 	"regexp"
@@ -159,6 +158,12 @@ func (w *LinodeWorker) Provision(ctx context.Context, tenantID, idempotencyKey s
 	if w.api == nil {
 		return job, errors.New("linode worker: API is required")
 	}
+	// The original handoff may still be in progress, or its worker may have
+	// restarted. Keep the recorded instance available for teardown, never
+	// allocate a duplicate or disrupt another in-flight provisioning call.
+	if box.BackendID != "" {
+		return job, errors.New("linode worker: provisioning instance already recorded; await completion or deprovision before retrying")
+	}
 	// A real registrar REQUIRES ops-handoff config: without it the box has no
 	// channel to hand its key back, so we'd create a billable box that can only
 	// block on AwaitKey until timeout and then degrade. Refuse BEFORE any VM.
@@ -192,8 +197,10 @@ func (w *LinodeWorker) Provision(ctx context.Context, tenantID, idempotencyKey s
 
 	firewallID, err := w.api.EnsureFirewall(ctx, headscaleFWLabel, []string{headscaleTag})
 	if err != nil {
-		log.Printf("linode worker: ensure firewall: %v", err)
-		firewallID = ""
+		return w.degradeProvision(job, box, fmt.Errorf("linode worker: ensure firewall: %w", err))
+	}
+	if firewallID == "" {
+		return w.degradeProvision(job, box, errors.New("linode worker: ensure firewall returned no ID"))
 	}
 	rootPass, err := randomPassword(32)
 	if err != nil {
@@ -207,22 +214,27 @@ func (w *LinodeWorker) Provision(ctx context.Context, tenantID, idempotencyKey s
 	if err != nil {
 		return w.degradeProvision(job, box, fmt.Errorf("linode worker: create instance: %w", err))
 	}
+	box.Backend = "linode"
+	box.BackendID = inst.ID
+	if err := w.store.SetBox(box, ""); err != nil {
+		return w.cleanupProvision(ctx, job, box, fmt.Errorf("linode worker: persist instance: %w", err))
+	}
 	inst, err = w.waitForRunning(ctx, inst.ID)
 	if err != nil {
-		return w.degradeProvision(job, box, err)
+		return w.cleanupProvision(ctx, job, box, err)
 	}
 	if len(inst.IPv4) == 0 || inst.IPv4[0] == "" {
-		return w.degradeProvision(job, box, errors.New("linode worker: running instance has no IPv4 address"))
+		return w.cleanupProvision(ctx, job, box, errors.New("linode worker: running instance has no IPv4 address"))
 	}
 	hostname := strings.ReplaceAll(inst.IPv4[0], ".", "-") + ".ip.linodeusercontent.com"
 	loginServer := "https://" + hostname
 	apiKey, err := w.reg.AwaitKey(ctx, token, loginServer, tenantID)
 	if err != nil {
-		return w.degradeProvision(job, box, fmt.Errorf("linode worker: acquire box API key: %w", err))
+		return w.cleanupProvision(ctx, job, box, fmt.Errorf("linode worker: acquire box API key: %w", err))
 	}
 	login, key, user, _, err := w.registerHeadscale(ctx, hsclient.BoxInfo{Hostname: hostname, APIKey: apiKey, User: tenantID, BackendID: inst.ID})
 	if err != nil {
-		return w.degradeProvision(job, box, fmt.Errorf("linode worker: validate box: %w", err))
+		return w.cleanupProvision(ctx, job, box, fmt.Errorf("linode worker: validate box: %w", err))
 	}
 	box.LoginServer = login
 	box.Hostname = hostname
@@ -230,12 +242,13 @@ func (w *LinodeWorker) Provision(ctx context.Context, tenantID, idempotencyKey s
 	box.BackendID = inst.ID
 	box.HSUser = user
 	if err := w.store.PromoteFabric(stagingLoginServer, box, key); err != nil {
-		return store.Job{}, fmt.Errorf("linode worker: persist box: %w", err)
-	}
-	if err := w.store.SetBoxStatus(login, store.StatusReady); err != nil {
-		return store.Job{}, fmt.Errorf("linode worker: mark box ready: %w", err)
+		box.LoginServer = stagingLoginServer
+		return w.cleanupProvision(ctx, job, box, fmt.Errorf("linode worker: persist box: %w", err))
 	}
 	job.LoginServer = login
+	if err := w.store.SetBoxStatus(login, store.StatusReady); err != nil {
+		return w.cleanupProvision(ctx, job, box, fmt.Errorf("linode worker: mark box ready: %w", err))
+	}
 	return job, nil
 }
 
@@ -243,11 +256,11 @@ func (w *LinodeWorker) Deprovision(ctx context.Context, tenantID, loginServer st
 	if err := ctx.Err(); err != nil {
 		return store.Job{}, err
 	}
-	box, started, err := w.store.BeginDeprovision(tenantID, loginServer)
+	box, err := w.store.GetBoxForTenant(tenantID, loginServer)
 	if err != nil {
 		return store.Job{}, err
 	}
-	if !started {
+	if box.Status == store.StatusDead {
 		return store.Job{}, nil
 	}
 	if w.api == nil {
@@ -263,8 +276,17 @@ func (w *LinodeWorker) Deprovision(ctx context.Context, tenantID, loginServer st
 	if err := w.api.DeleteInstance(ctx, box.BackendID); err != nil {
 		return store.Job{}, fmt.Errorf("linode worker: delete instance: %w", err)
 	}
+	// Claim completion only after deletion succeeds. Concurrent callers may
+	// repeat the idempotent cloud delete, but only one enqueues a teardown job.
+	_, started, err := w.store.BeginDeprovision(tenantID, loginServer)
+	if err != nil {
+		return store.Job{}, err
+	}
 	if err := w.store.SetBoxStatus(loginServer, store.StatusDead); err != nil {
 		return store.Job{}, fmt.Errorf("linode worker: mark box dead: %w", err)
+	}
+	if !started {
+		return store.Job{}, nil
 	}
 	job, err := w.store.EnqueueJob(store.Job{TenantID: tenantID, LoginServer: loginServer, Kind: "deprovision"})
 	if err != nil {
@@ -299,6 +321,27 @@ func (w *LinodeWorker) degradeProvision(job store.Job, box store.Box, err error)
 		return store.Job{}, fmt.Errorf("%w; mark box degraded: %v", err, statusErr)
 	}
 	return job, err
+}
+
+func (w *LinodeWorker) cleanupProvision(ctx context.Context, job store.Job, box store.Box, cause error) (store.Job, error) {
+	// Cleanup must still run if provisioning failed because its caller canceled.
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	defer cancel()
+	cleanupErr := w.api.DeleteInstance(cleanupCtx, box.BackendID)
+	outcome := "succeeded"
+	if cleanupErr != nil {
+		outcome = "failed: " + cleanupErr.Error()
+		cause = errors.Join(cause, fmt.Errorf("linode worker: cleanup instance %s: %w", box.BackendID, cleanupErr))
+	}
+	job.LastError = fmt.Sprintf("%v; cleanup instance %s %s", cause, box.BackendID, outcome)
+	job.UpdatedAt = time.Now().UTC()
+	if err := w.store.SetJob(job); err != nil {
+		cause = errors.Join(cause, fmt.Errorf("linode worker: record cleanup: %w", err))
+	}
+	if err := w.store.SetBoxStatus(box.LoginServer, store.StatusDegraded); err != nil {
+		cause = errors.Join(cause, fmt.Errorf("linode worker: mark box degraded: %w", err))
+	}
+	return job, cause
 }
 
 func unavailableRegistrarError() error {

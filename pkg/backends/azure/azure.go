@@ -266,6 +266,18 @@ func (b *Backend) CreateNode(ctx context.Context, spec *backends.NodeSpec) (stri
 		return "", backends.MarkCreateProvenZeroResource(fmt.Errorf("azure: no location configured"))
 	}
 
+	existing, err := b.vmClient.Get(ctx, b.resourceGroup, spec.Name, nil)
+	if err != nil {
+		var responseErr *azcore.ResponseError
+		if !errors.As(err, &responseErr) || responseErr.StatusCode != http.StatusNotFound {
+			return "", backends.MarkCreateProvenZeroResource(
+				fmt.Errorf("azure: getting VM %s: %w", spec.Name, err))
+		}
+	} else if !ownsVM(existing.Tags, spec.ScopeHash) {
+		return "", backends.MarkCreateProvenZeroResource(
+			fmt.Errorf("azure: VM %s is outside owned scope %q", spec.Name, spec.ScopeHash))
+	}
+
 	subnetID, err := b.ensureNetwork(ctx, location)
 	if err != nil {
 		// No VM request has been dispatched. Shared network scaffolding may be

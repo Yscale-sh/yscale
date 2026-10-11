@@ -186,7 +186,6 @@ func TestIdleWatcherIgnoresPodsThatAreNotWork(t *testing.T) {
 		{"mirror", idlePod(idlePodOpts{name: "static-kube-proxy", nodeName: node.Name, mirror: true})},
 		{"succeeded", idlePod(idlePodOpts{name: "batch-done", nodeName: node.Name, phase: corev1.PodSucceeded})},
 		{"failed", idlePod(idlePodOpts{name: "batch-lost", nodeName: node.Name, phase: corev1.PodFailed})},
-		{"deleting", idlePod(idlePodOpts{name: "draining", nodeName: node.Name, deleting: true})},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

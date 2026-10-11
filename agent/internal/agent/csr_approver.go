@@ -6,11 +6,13 @@ import (
 	"encoding/pem"
 	"fmt"
 	"log/slog"
+	"net"
 	"slices"
 	"strings"
 	"time"
 
 	certv1 "k8s.io/api/certificates/v1"
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/watch"
@@ -138,7 +140,7 @@ func (a *CSRApprover) tick(ctx context.Context) error {
 	}
 	for i := range list.Items {
 		csr := &list.Items[i]
-		if !a.eligible(csr) {
+		if !a.eligible(ctx, csr) {
 			continue
 		}
 		if alreadyDecided(csr) {
@@ -188,7 +190,7 @@ const nodeBindGroupPrefix = "system:bootstrappers:yscale:nodes:"
 //     system:node:<name> in group system:nodes — NOT the bootstrap
 //     group. We additionally require username == CN so a node can
 //     only request a serving cert for its own identity.
-func (a *CSRApprover) eligible(csr *certv1.CertificateSigningRequest) bool {
+func (a *CSRApprover) eligible(ctx context.Context, csr *certv1.CertificateSigningRequest) bool {
 	parsed, err := parseCSRPEM(csr.Spec.Request)
 	if err != nil {
 		return false
@@ -217,8 +219,42 @@ func (a *CSRApprover) eligible(csr *certv1.CertificateSigningRequest) bool {
 		}
 		return slices.Contains(csr.Spec.Groups, nodeBindGroupPrefix+nodeName)
 	case certv1.KubeletServingSignerName:
-		return slices.Contains(csr.Spec.Groups, nodesGroup) &&
-			csr.Spec.Username == parsed.Subject.CommonName
+		if !slices.Contains(csr.Spec.Groups, nodesGroup) || csr.Spec.Username != parsed.Subject.CommonName {
+			return false
+		}
+		// Serving identities must be limited to this Node's advertised addresses.
+		// Lookup failures leave the CSR pending so the next tick can retry.
+		if len(parsed.EmailAddresses) != 0 || len(parsed.URIs) != 0 {
+			return false
+		}
+		nodeName := strings.TrimPrefix(parsed.Subject.CommonName, "system:node:")
+		node, err := a.K8s.CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
+		if err != nil {
+			return false
+		}
+		names := map[string]bool{nodeName: true}
+		var ips []net.IP
+		for _, address := range node.Status.Addresses {
+			switch address.Type {
+			case corev1.NodeHostName, corev1.NodeInternalDNS, corev1.NodeExternalDNS:
+				names[address.Address] = true
+			case corev1.NodeInternalIP, corev1.NodeExternalIP:
+				if ip := net.ParseIP(address.Address); ip != nil {
+					ips = append(ips, ip)
+				}
+			}
+		}
+		for _, name := range parsed.DNSNames {
+			if !names[name] {
+				return false
+			}
+		}
+		for _, ip := range parsed.IPAddresses {
+			if !slices.ContainsFunc(ips, func(known net.IP) bool { return known.Equal(ip) }) {
+				return false
+			}
+		}
+		return true
 	default:
 		return false
 	}

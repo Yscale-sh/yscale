@@ -112,7 +112,6 @@ func TestPrepareIdleTeardownIgnoresPodsThatAreNotWork(t *testing.T) {
 		{"daemonset", idlePod(idlePodOpts{name: "node-exporter", nodeName: preflightNodeName, daemonSet: true})},
 		{"mirror", idlePod(idlePodOpts{name: "static-kube-proxy", nodeName: preflightNodeName, mirror: true})},
 		{"succeeded", idlePod(idlePodOpts{name: "batch-done", nodeName: preflightNodeName, phase: corev1.PodSucceeded})},
-		{"deleting", idlePod(idlePodOpts{name: "draining", nodeName: preflightNodeName, deleting: true})},
 		{"another node's", idlePod(idlePodOpts{name: "elsewhere", nodeName: "ys-burst-other"})},
 	}
 	for _, tc := range tests {

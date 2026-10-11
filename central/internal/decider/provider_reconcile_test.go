@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/yscale-sh/yscale/central/internal/lifecycle"
+	"github.com/yscale-sh/yscale/central/internal/state"
 	"github.com/yscale-sh/yscale/pkg/backends"
 )
 
@@ -964,7 +965,7 @@ func TestProviderReconciliationAbsenceRecoveryOnlyAfterSuccessfulInventory(t *te
 	})
 }
 
-func TestProviderReconciliationProviderAccountIsolation(t *testing.T) {
+func TestProviderReconciliationProtectsSharedLinodeInstance(t *testing.T) {
 	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
 	store := &fakeReconciliationStore{protected: []lifecycle.ProviderResourceRef{{
 		Provider: backends.TypeLinode, CloudAccountID: "account-a", ProviderResourceID: "same-id",
@@ -988,7 +989,36 @@ func TestProviderReconciliationProviderAccountIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if summary.Deleted != 1 || len(backend.deleted) != 1 {
-		t.Fatalf("provider/account isolation failed: summary=%+v deleted=%v", summary, backend.deleted)
+	if summary.Deleted != 0 || summary.Quarantined != 0 || len(backend.deleted) != 0 {
+		t.Fatalf("shared Linode instance was treated as an orphan: summary=%+v deleted=%v", summary, backend.deleted)
+	}
+}
+
+func TestProviderReconciliationProtectsSharedLinodeBookings(t *testing.T) {
+	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
+	bookings := state.New()
+	if err := bookings.PutBurst(&state.Burst{
+		ID: "booked", CustomerID: "tenant-a", Backend: backends.TypeLinode,
+		CloudAccountID: "account-a", BackendID: "1234",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	store := &fakeReconciliationStore{orphans: map[string]lifecycle.ProviderOrphanRecord{
+		providerResourceKey(backends.TypeLinode, "", "1234"): {
+			Provider: backends.TypeLinode, ProviderResourceID: "1234",
+			State: lifecycle.ProviderOrphanQuarantined, FirstObservedAt: now.Add(-time.Hour),
+		},
+	}}
+	// The platform's credentials may see the same instance as the tenant's.
+	backend := &reconcileBackend{name: backends.TypeLinode, owned: []backends.OwnedNode{{
+		BackendID: "1234", CreatedAt: now.Add(-time.Hour),
+	}}}
+	d := &Decider{store: bookings, linode: backend, reconciliation: store}
+	summary, err := d.ReconcileProviders(context.Background(), ProviderReconcileOptions{Now: now, Grace: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if summary.Deleted != 0 || summary.Quarantined != 0 || len(backend.deleted) != 0 {
+		t.Fatalf("tenant booking was not protected from platform inventory: summary=%+v deleted=%v", summary, backend.deleted)
 	}
 }

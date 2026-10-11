@@ -40,9 +40,10 @@ rules:
   - apiGroups: [certificates.k8s.io]
     resources: [certificatesigningrequests/approval]
     verbs: [update]
-  # Approver permissions for kubelet client + serving CSRs from the
-  # yscale bursts group only. Without this, kubelet stays in pending
-  # state forever after first bootstrap.
+  # RBAC restricts approval to the kubelet client and serving signers only.
+  # CSR group/name checks live in CSRApprover.eligible in
+  # agent/internal/agent/csr_approver.go, not in RBAC. These permissions alone
+  # do not prevent a compromised connector from approving unrelated kubelets.
   - apiGroups: [certificates.k8s.io]
     resources: [signers]
     resourceNames:

@@ -104,8 +104,8 @@ func (h *RealHandler) drainTimeout() time.Duration {
 	return 60 * time.Second
 }
 
-// evictionPollInterval is how often we retry an eviction blocked by
-// a PDB before falling back to direct delete.
+// evictionPollInterval is how often we retry a failed eviction before
+// falling back to direct delete at the drain deadline.
 const evictionPollInterval = 2 * time.Second
 
 const (
@@ -651,6 +651,9 @@ func (h *RealHandler) drainAndDeleteNode(ctx context.Context, nodeName string, d
 		deadline := time.Now().Add(timeout)
 		evicted := false
 		for time.Now().Before(deadline) {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			err := h.K8s.PolicyV1().Evictions(pod.Namespace).Evict(ctx, &policyv1.Eviction{
 				ObjectMeta: metav1.ObjectMeta{Name: pod.Name, Namespace: pod.Namespace},
 			})
@@ -658,18 +661,19 @@ func (h *RealHandler) drainAndDeleteNode(ctx context.Context, nodeName string, d
 				evicted = true
 				break
 			}
-			if apierrors.IsTooManyRequests(err) {
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				case <-time.After(evictionPollInterval):
-				}
-				continue
+			if !apierrors.IsTooManyRequests(err) {
+				h.Log.Warn("eviction failed; retrying until drain deadline", "pod", pod.Name, "namespace", pod.Namespace, "error", err)
 			}
-			h.Log.Warn("eviction failed", "pod", pod.Name, "namespace", pod.Namespace, "error", err)
-			break
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(min(evictionPollInterval, time.Until(deadline))):
+			}
 		}
 		if !evicted {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			h.Log.Warn("eviction timeout, deleting", "pod", pod.Name, "namespace", pod.Namespace)
 			if err := h.K8s.CoreV1().Pods(pod.Namespace).Delete(ctx, pod.Name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
 				return fmt.Errorf("delete pod %s/%s after eviction failure: %w", pod.Namespace, pod.Name, err)
