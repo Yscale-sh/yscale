@@ -799,11 +799,22 @@ func (b *Backend) preflightAccountImage(ctx context.Context, imageRef string) er
 }
 
 func (b *Backend) listInstances(ctx context.Context) ([]Instance, error) {
-	var out listResponse[Instance]
-	if err := b.doJSON(ctx, "GET", "/linode/instances", nil, &out); err != nil {
-		return nil, err
+	// Linode paginates list endpoints (100 per page by default, 500 max).
+	// Inventory feeds orphan cleanup and durable absence receipts, so a
+	// partial first page must never pass for the whole account: walk every page.
+	var all []Instance
+	for page := 1; ; page++ {
+		var out listResponse[Instance]
+		path := fmt.Sprintf("/linode/instances?page=%d&page_size=500", page)
+		if err := b.doJSON(ctx, "GET", path, nil, &out); err != nil {
+			return nil, err
+		}
+		all = append(all, out.Data...)
+		if out.Pages == 0 || page >= out.Pages {
+			break
+		}
 	}
-	return out.Data, nil
+	return all, nil
 }
 
 // mapStatus collapses Linode instance status into our NodePhase.

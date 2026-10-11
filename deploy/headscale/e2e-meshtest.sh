@@ -36,8 +36,14 @@ api() { curl -sS -H "Authorization: Bearer $LINODE_TOKEN" "$@"; }
 
 teardown() {
   local rc=$?
-  log "tearing down ALL yscale-headscale nodes (exit $rc) ..."
-  bash "$SCRIPT_DIR/deprovision.sh" --all 2>&1 | sed 's/^/[e2e]   /' || true
+  # Delete only the Linodes THIS run created (each delete is still tag-verified
+  # inside deprovision.sh). Never --all: the account may host other tenants'
+  # Headscale boxes and concurrent test runs that share the owner tag.
+  log "tearing down test-owned nodes (exit $rc) ..."
+  local id
+  for id in ${BOX_LID:-} ${A_LID:-} ${B_LID:-}; do
+    bash "$SCRIPT_DIR/deprovision.sh" "$id" 2>&1 | sed 's/^/[e2e]   /' || true
+  done
   log "teardown done"
 }
 trap teardown EXIT INT TERM HUP

@@ -19,6 +19,7 @@ import (
 	"log/slog"
 	"maps"
 	"math"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -953,6 +954,12 @@ func bootstrapEndpointFor(clusterID string) string {
 func burstImageForBackend(backendName string) string {
 	switch backendName {
 	case backends.TypeFlyIO:
+		// Fly registries are per account: operators push their own build of
+		// burst/image/Dockerfile.kubelet and name it here. The default is the
+		// project account's path and will not resolve elsewhere.
+		if v := strings.TrimSpace(os.Getenv("YSCALE_FLYIO_BURST_IMAGE")); v != "" {
+			return v
+		}
 		return "registry.fly.io/yscale-burst-image:kubelet-latest"
 	}
 	return backends.AgentImage()

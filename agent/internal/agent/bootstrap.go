@@ -348,6 +348,10 @@ type BootstrapResponse struct {
 }
 
 func (s *BootstrapServer) handleBootstrap(w http.ResponseWriter, r *http.Request) {
+	// This handler authenticates by the BurstID carried *inside* the JSON, so
+	// decoding runs before authorization. Bound the body so an unauthenticated
+	// tailnet peer cannot make the agent buffer an arbitrarily large payload.
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	var req bootstrapRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "decode: "+err.Error(), http.StatusBadRequest)

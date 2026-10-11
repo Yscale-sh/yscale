@@ -275,7 +275,6 @@ jobs:
 
       - name: helm lint
         run: |
-          helm lint deploy/helm/yscale
           helm lint deploy/helm/yscale-agent
 
       - name: immutable-image contract

@@ -56,6 +56,30 @@ unqualified for this source snapshot. Private operator receipts are not public
 release proof. The operational readiness checker retains its complete checks,
 but this source release does not activate a hosted service.
 
+## Known limitations in this preview
+
+- **One central per provider account.** Orphan reaping identifies burst
+  machines by a shared owner tag (`yscale-burst`) or name prefix, not per
+  installation. Two Yscale installs sharing one Linode, AWS, Fly, GCP or Azure
+  account can reap each other's live bursts. Give each install its own account
+  or project until per-install scoping ships.
+- **Linode burst images are account-scoped.** The built-in `private/<id>`
+  defaults only resolve in the account that baked them. Bake your own and set
+  `YSCALE_LINODE_IMAGE_CPU` / `YSCALE_LINODE_IMAGE_GPU` (see the quickstart).
+- **Fly burst image.** Fly machines pull the burst image from your own Fly
+  registry. Push one built from `burst/image/Dockerfile.kubelet` and set
+  `YSCALE_FLYIO_BURST_IMAGE`; the default path belongs to the project's account.
+- **Bootstrap trust boundary.** The connector's bootstrap endpoint authorizes a
+  joining burst by its BurstID, which also forms the node name. Keep that
+  endpoint reachable only over the tailnet; it must never be exposed to
+  workload pods or the public internet.
+- **Unqualified paths.** Hosted multi-tenant operation, GCP and Azure bursts,
+  AWS GPU bursts and the LKE/EKS/GKE/AKS target variants have no live
+  qualification in this release; treat them as experimental.
+- **Test tooling is destructive by tag.** `scripts/sweep-test-leaks.sh` and the
+  Headscale e2e scripts delete by owner tag or name prefix. Run them only
+  against accounts dedicated to testing.
+
 ## Build and explore
 
 Install the Go version required by [go.mod](go.mod), plus `curl` and `jq` for
@@ -69,9 +93,10 @@ GOFLAGS=-p=2 make build
 go test -p=2 ./...
 ```
 
-The CLI includes workload submission, Helm values generation, template catalog
-commands and manifest injection. Running it without a subcommand starts the
-legacy controller; use `help` when exploring without provisioning anything.
+The CLI includes workload submission, template catalog commands and manifest
+injection. Running it without a subcommand starts the legacy controller, which
+this release does not package or ship an image for; use `help` when exploring
+without provisioning anything.
 
 The default build and tagged release archives include central, agent, factory,
 CLI and the lifecycle migration tool. No enterprise tag or export step
@@ -106,7 +131,7 @@ managed hosting, an SLA, or guaranteed cloud-cost ceilings.
 
 ## Repository map
 
-- `cmd/yscale/` — CLI and legacy controller
+- `cmd/yscale/` — CLI (plus the unpackaged legacy controller mode)
 - `central/` — control plane, placement, lifecycle and account APIs
 - `agent/` — Kubernetes cluster connector
 - `burst/` — burst-node images and bootstrap components

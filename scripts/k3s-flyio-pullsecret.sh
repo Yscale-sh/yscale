@@ -23,9 +23,16 @@ if ! grep -q "registry.fly.io" "$CONFIG"; then
   exit 1
 fi
 
+# Copy ONLY the registry.fly.io entry. A Docker config usually holds
+# credentials for other registries too, and an image pull Secret is readable
+# by anyone who can read Secrets in the namespace.
+FILTERED="$(mktemp)"
+trap 'rm -f "$FILTERED"' EXIT
+jq '{auths: {"registry.fly.io": .auths["registry.fly.io"]}}' "$CONFIG" > "$FILTERED"
+
 kubectl -n "$NS" delete secret "$NAME" --ignore-not-found
 kubectl -n "$NS" create secret generic "$NAME" \
   --type=kubernetes.io/dockerconfigjson \
-  --from-file=.dockerconfigjson="$CONFIG"
+  --from-file=.dockerconfigjson="$FILTERED"
 
 echo "created Secret $NS/$NAME from $CONFIG"

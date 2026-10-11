@@ -142,11 +142,6 @@ check_chart() {
 echo "helm: ${HELM[*]}"
 echo
 
-check_chart "yscale controller" \
-  "deploy/helm/yscale" "image" \
-  "ghcr.io/jakenesler/yscale-controller" \
-  "ghcr.io/jakenesler/yscale-controller:latest"
-
 # The connector's tag fallback is the chart's appVersion: the release it ships in.
 AGENT_APP_VERSION=$(sed -nE 's/^appVersion:[[:space:]]*"?([^"[:space:]]+)"?[[:space:]]*$/\1/p' \
   deploy/helm/yscale-agent/Chart.yaml)

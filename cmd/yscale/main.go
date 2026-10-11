@@ -32,12 +32,6 @@ func main() {
 	// or a leading -flag) runs the controller.
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
-		case "init":
-			if err := runInit(os.Args[2:]); err != nil {
-				fmt.Fprintln(os.Stderr, "yscale init:", err)
-				os.Exit(1)
-			}
-			return
 		case "apply":
 			if err := runApply(os.Args[2:]); err != nil {
 				fmt.Fprintln(os.Stderr, "yscale apply:", err)
@@ -75,7 +69,6 @@ func printUsage() {
 
 Usage:
   yscale [flags]                    run the OSS controller (default, legacy)
-  yscale init [flags]               generate a Helm values fragment from a kubeconfig
   yscale apply [-f FILE]            submit a Workload YAML
   yscale price gpu                  show the yscale GPU price index
   yscale catalog get [flags]        fetch a tenant template catalog
@@ -88,7 +81,7 @@ For the Yscale Cluster Connector, see the separate yscale-agent binary
 (yscale-agent remains the compatibility artifact name).
 For the Yscale Control Plane API, see yscale-cloud.
 
-Run 'yscale init -h', 'yscale apply -h', 'yscale inject -h', or 'yscale -h' for flags.
+Run 'yscale apply -h', 'yscale inject -h', or 'yscale -h' for flags.
 `)
 }
 

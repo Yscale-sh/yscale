@@ -27,9 +27,9 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 [ -f "${REPO_ROOT}/.env" ] && set -a && . "${REPO_ROOT}/.env" && set +a || true
 
 # Tunable: leave most-recent N seconds alone in case a test is mid-flight.
-# Default 0 = sweep everything; set MIN_AGE_SEC=300 if you want a 5-min
-# grace period to avoid clobbering a concurrent test run.
-MIN_AGE_SEC="${MIN_AGE_SEC:-0}"
+# Default 1800 (30 min) so a sweep never clobbers a concurrent test run;
+# set MIN_AGE_SEC=0 to deliberately sweep everything.
+MIN_AGE_SEC="${MIN_AGE_SEC:-1800}"
 DRY_RUN="${DRY_RUN:-0}"
 
 log() { printf '[sweep] %s\n' "$*" >&2; }

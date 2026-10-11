@@ -51,8 +51,9 @@ git clone --branch "$VERSION" https://github.com/yscale-sh/yscale.git
   its digest. To build your own instead, use
   `agent/build/Dockerfile.agent.buildkit` with the source root as context.
 - **Linode burst image.** Run
-  `LINODE_TOKEN=... ./pkg/backends/linode/bake-cpu-image.sh`. It prints a
-  `private/<id>` image. Linode images belong to the account that baked them,
+  `LINODE_TOKEN=... SMOKE_PUBKEY="$(cat ~/.ssh/id_ed25519.pub)" SSH_PRIVKEY=~/.ssh/id_ed25519 ./pkg/backends/linode/bake-cpu-image.sh`.
+  The bake polls the build VM over SSH, so a key pair is required. It prints
+  a `private/<id>` image. Linode images belong to the account that baked them,
   so you must bake your own.
 
 ## 2. Run the operations Headscale
