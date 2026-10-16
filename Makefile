@@ -1,5 +1,7 @@
 BINARY := yscale
-TAG    := latest
+TAG ?= latest
+IMAGE_REGISTRY ?= ghcr.io/yscale-sh
+PLATFORM ?= linux/amd64
 GO ?= go
 BIN_DIR ?= bin
 
@@ -23,39 +25,47 @@ help:
 	@echo "  clean            remove bin/"
 	@echo
 	@echo "  agent-image-build   build the Cluster Connector image"
-	@echo "  burst-image-push    build + push the burst node image"
+	@echo "  cloud-image-build   build central and its lifecycle migrator"
+	@echo "  factory-image-build build the managed-mesh factory image"
+	@echo "  burst-image-push    build + push the burst base and node images"
+	@echo "  all-images-push     build + push connector, central, factory, burst base + node"
 	@echo
-	@echo "Node images and registries default to the maintainer's accounts and"
-	@echo "are not pullable elsewhere. Override them with YSCALE_BURST_IMAGE,"
-	@echo "YSCALE_LINODE_IMAGE_CPU/_GPU and YSCALE_AWS_AMI — see the README."
+	@echo "Build overrides: IMAGE_REGISTRY=$(IMAGE_REGISTRY), TAG=$(TAG), PLATFORM=$(PLATFORM)."
+	@echo "Use one platform with these --load targets; BuildKit service Dockerfiles"
+	@echo "also support multi-platform builds with docker buildx build --push."
+	@echo "Burst images are amd64-only unless Dockerfile.kubelet.base is made TARGETARCH-aware."
+	@echo "Per-image build overrides: FLY_AGENT_IMAGE, FLY_CLOUD_IMAGE, FLY_FACTORY_IMAGE,"
+	@echo "FLY_BURST_IMAGE and FLY_BURST_BASE_IMAGE (historical names; any registry)."
+	@echo "The default maintainer registry is private; publish to your own registry."
+	@echo "YSCALE_BURST_IMAGE and YSCALE_FLYIO_BURST_IMAGE are central runtime settings,"
+	@echo "as are YSCALE_LINODE_IMAGE_CPU/_GPU and YSCALE_AWS_AMI — see the README."
 	@echo
 	@echo "Run 'grep \"^[a-z-]*:\" Makefile' for the full target list."
 
-# All yscale container images live in the Fly registry under separate
-# apps. Fly machines pull the burst image directly (no auth needed for
-# images owned by the same Fly org). k3s pulls the cloud/agent images
-# using a Secret derived from `flyctl auth docker` creds — see
-# scripts/k3s-flyio-pullsecret.sh.
-#
-# One-time setup for any new image target:
-#   flyctl auth docker
-#   flyctl apps create <FLY_APP> --org <your-org>
-FLY_BURST_APP        := yscale-burst-image
-FLY_BURST_IMAGE      := registry.fly.io/$(FLY_BURST_APP):kubelet-latest
-FLY_BURST_BASE_APP   := yscale-burst-base
-FLY_BURST_BASE_IMAGE := registry.fly.io/$(FLY_BURST_BASE_APP):latest
+# Publish every image to an operator-owned registry. The historical FLY_ names
+# remain per-image overrides; they do not require Fly. For registry.fly.io,
+# create each app in your own org and authenticate with `flyctl auth docker`.
+# Kubernetes private registries also need namespace-local imagePullSecrets.
+FLY_BURST_APP        ?= yscale-burst-image
+FLY_BURST_IMAGE      ?= $(IMAGE_REGISTRY)/$(FLY_BURST_APP):$(TAG)
+FLY_BURST_BASE_APP   ?= yscale-burst-base
+FLY_BURST_BASE_IMAGE ?= $(IMAGE_REGISTRY)/$(FLY_BURST_BASE_APP):$(TAG)
 
-FLY_CLOUD_APP   := yscale-cloud
-FLY_CLOUD_IMAGE := registry.fly.io/$(FLY_CLOUD_APP):$(TAG)
+FLY_CLOUD_APP   ?= yscale-cloud
+FLY_CLOUD_IMAGE ?= $(IMAGE_REGISTRY)/$(FLY_CLOUD_APP):$(TAG)
 
-FLY_AGENT_APP   := yscale-cluster-agent
-FLY_AGENT_IMAGE := registry.fly.io/$(FLY_AGENT_APP):$(TAG)
+FLY_AGENT_APP   ?= yscale-cluster-agent
+FLY_AGENT_IMAGE ?= $(IMAGE_REGISTRY)/$(FLY_AGENT_APP):$(TAG)
+
+FLY_FACTORY_APP   ?= yscale-factory
+FLY_FACTORY_IMAGE ?= $(IMAGE_REGISTRY)/$(FLY_FACTORY_APP):$(TAG)
 
 .PHONY: build run run-legacy-controller test test-t1-contract test-lifecycle-integration clean lint fmt \
         burst-base-image-build burst-base-image-push \
         burst-image-build burst-image-push \
         cloud-image-build cloud-image-push \
         agent-image-build agent-image-push \
+        factory-image-build factory-image-push \
         bin/yscale-cloud-linux-amd64 bin/yscale-agent-linux-amd64 \
         all-images-push \
         yscaletest e2e sweep-leaks
@@ -127,12 +137,13 @@ clean:
 # ---- burst-node base image (heavy downloads; rebuild rarely) ----
 # Push this once, then `burst-image-push` cycles in seconds.
 burst-base-image-build:
+	@test "$(PLATFORM)" = linux/amd64 || { echo "Burst images require PLATFORM=linux/amd64; Dockerfile.kubelet.base is not TARGETARCH-aware." >&2; exit 1; }
 	docker buildx build \
-		--platform linux/amd64 \
+		--platform $(PLATFORM) \
 		-t $(FLY_BURST_BASE_IMAGE) \
 		-f burst/image/Dockerfile.kubelet.base \
 		--load \
-		burst/image
+		.
 
 burst-base-image-push: burst-base-image-build
 	docker push $(FLY_BURST_BASE_IMAGE)
@@ -141,31 +152,35 @@ burst-base-image-push: burst-base-image-build
 # Slim: FROM yscale-burst-base + COPY entrypoint. Iterations on the
 # entrypoint are ~5s push.
 burst-image-build:
+	@test "$(PLATFORM)" = linux/amd64 || { echo "Burst images require PLATFORM=linux/amd64; Dockerfile.kubelet.base is not TARGETARCH-aware." >&2; exit 1; }
 	docker buildx build \
-		--platform linux/amd64 \
+		--platform $(PLATFORM) \
+		--build-arg BASE_IMAGE=$(FLY_BURST_BASE_IMAGE) \
 		-t $(FLY_BURST_IMAGE) \
 		-f burst/image/Dockerfile.kubelet \
 		--load \
-		burst/image
+		.
 
-burst-image-push: burst-image-build
+# Publish the base before building the overlay, including with parallel make:
+# a container-backed Buildx builder cannot rely on Docker's local image store.
+burst-image-push: burst-base-image-push
+	$(MAKE) --no-print-directory burst-image-build
 	docker push $(FLY_BURST_IMAGE)
 
 # ---- yscale-cloud (central server, runs in customer cluster) ----
-# Cross-compile on the host (the Mac has way more RAM than buildkit's
-# container; we keep crashing with OOM building aws-sdk-go-v2 inside
-# the container). Then package the static binary into a small alpine.
+# BuildKit cross-compiles for PLATFORM and includes the lifecycle migrator.
+# The explicit host-binary target remains available for local packaging.
 bin/yscale-cloud-linux-amd64:
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
 		-trimpath -ldflags="-s -w" \
 		-o bin/yscale-cloud-linux-amd64 \
 		./central/cmd/yscale-cloud
 
-cloud-image-build: bin/yscale-cloud-linux-amd64
+cloud-image-build:
 	docker buildx build \
-		--platform linux/amd64 \
+		--platform $(PLATFORM) \
 		-t $(FLY_CLOUD_IMAGE) \
-		-f central/build/Dockerfile.cloud \
+		-f central/build/Dockerfile.cloud.buildkit \
 		--load \
 		.
 
@@ -179,18 +194,31 @@ bin/yscale-agent-linux-amd64:
 		-o bin/yscale-agent-linux-amd64 \
 		./agent/cmd/yscale-agent
 
-agent-image-build: bin/yscale-agent-linux-amd64
+agent-image-build:
 	docker buildx build \
-		--platform linux/amd64 \
+		--platform $(PLATFORM) \
+		--build-arg VERSION=$(TAG) \
 		-t $(FLY_AGENT_IMAGE) \
-		-f agent/build/Dockerfile.agent \
+		-f agent/build/Dockerfile.agent.buildkit \
 		--load \
 		.
 
 agent-image-push: agent-image-build
 	docker push $(FLY_AGENT_IMAGE)
 
-all-images-push: burst-image-push cloud-image-push agent-image-push
+# ---- managed-mesh factory (includes coordination-box provisioning assets) ----
+factory-image-build:
+	docker buildx build \
+		--platform $(PLATFORM) \
+		-t $(FLY_FACTORY_IMAGE) \
+		-f factory/build/Dockerfile.factory.buildkit \
+		--load \
+		.
+
+factory-image-push: factory-image-build
+	docker push $(FLY_FACTORY_IMAGE)
+
+all-images-push: burst-base-image-push burst-image-push cloud-image-push agent-image-push factory-image-push
 
 # ---- backend leak sweep ----
 # Destroys ys-burst-* machines on Fly + Linode that were left over from

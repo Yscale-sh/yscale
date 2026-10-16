@@ -6,10 +6,13 @@
 .github/actionlint.yaml
 .github/workflows/ci.yaml
 .github/workflows/images.yaml
-.github/workflows/kube-bench-ci.yml
-.github/workflows/lke-release-gate.yaml
 .github/workflows/release.yaml
 .github/workflows/release-export.yaml
+.github/ISSUE_TEMPLATE/bug_report.md
+.github/ISSUE_TEMPLATE/feature_request.md
+.github/ISSUE_TEMPLATE/config.yml
+.github/PULL_REQUEST_TEMPLATE.md
+.github/CODEOWNERS
 .gitignore
 COMMERCIAL.md
 CONTRIBUTING.md
@@ -445,6 +448,7 @@ cmd/yscale/inject.go
 cmd/yscale/internal/inject/inject.go
 cmd/yscale/internal/inject/inject_test.go
 cmd/yscale/main.go
+cmd/yscale/main_test.go
 cmd/yscale/price.go
 cmd/yscale/price_endpoint_test.go
 cmd/yscaletest/access_probe.go
@@ -759,12 +763,6 @@ pkg/cache/manifest.go
 pkg/cache/retention.go
 pkg/config/config.go
 pkg/config/config_test.go
-pkg/controller/bootstrap.go
-pkg/controller/controller.go
-pkg/controller/gpu_taint_test.go
-pkg/controller/pool_test.go
-pkg/controller/prewarm.go
-pkg/controller/prewarm_test.go
 pkg/cost/tracker.go
 pkg/cost/tracker_test.go
 pkg/k8s/api/v1/conditions.go
@@ -775,8 +773,6 @@ pkg/k8s/api/v1/types_test.go
 pkg/logger/logger.go
 pkg/logger/logger_test.go
 pkg/metrics/metrics.go
-pkg/preflight/preflight.go
-pkg/preflight/preflight_test.go
 pkg/protocol/messages.go
 pkg/protocol/messages_test.go
 pkg/protocol/submission_origin.go

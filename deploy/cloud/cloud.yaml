@@ -8,10 +8,25 @@
 # purely to keep the moving parts small.
 #
 # Requires:
+#  0. Fork the repo and publish with its images workflow, or build locally from
+#     central/build/Dockerfile.cloud.buildkit and push to your own registry.
+#     The ghcr.io/yscale-sh image below is private; replace its image: line with
+#     your own repository and pushed tag/digest before applying this template.
+#     For a private image, add spec.template.spec.imagePullSecrets referencing
+#     a registry pull secret in namespace yscale.
 #  1. Namespace `yscale` exists (kubectl create namespace yscale)
-#  2. Secret `yscale-cloud-secrets` exists with FLYIO_TOKEN +
-#     TS_OAUTH_CLIENT_ID + TS_OAUTH_CLIENT_SECRET + TS_TAILNET
-#     (created from .env via scripts/seed-cloud-secrets.sh)
+#  2. Secret `yscale-cloud-secrets` configures your managed-mesh central:
+#     FACTORY_URL (private factory fabric endpoint), FACTORY_BEARER_TOKEN
+#     (matching the factory), and YSCALE_ADMIN_TOKEN (operator API access).
+#     Create tenant tokens through the admin API; YSCALE_TOKEN is only the
+#     optional in-memory dev tenant seed, not the admin or factory credential.
+#     Add credentials for enabled providers (e.g. FLYIO_TOKEN or LINODE_TOKEN)
+#     and your own image overrides: YSCALE_FLYIO_BURST_IMAGE for Fly,
+#     YSCALE_BURST_IMAGE for the shared OCI default, YSCALE_LINODE_IMAGE_CPU /
+#     YSCALE_LINODE_IMAGE_GPU, YSCALE_AWS_AMI, or YSCALE_GCP_IMAGE as applicable.
+#     Do not set TS_OAUTH_CLIENT_ID, TS_OAUTH_CLIENT_SECRET or TS_TAILNET;
+#     this managed-mesh release rejects legacy SaaS OAuth configuration.
+#     See .env.cloud.example and docs/self-hosted-mesh.md for state and keys.
 #
 #     It also carries YSCALE_PLACEMENT_TOKEN_KEY, the HMAC key central signs
 #     placement-preview launch tokens with. It rides in the Secret rather
@@ -44,6 +59,9 @@ spec:
       labels:
         app.kubernetes.io/name: yscale-cloud
     spec:
+      # For a private operator image; create this Secret in namespace yscale.
+      # imagePullSecrets:
+      #   - name: your-registry-pull-secret
       containers:
         - name: yscale-cloud
           image: ghcr.io/yscale-sh/yscale-cloud:v0.0.2-preview

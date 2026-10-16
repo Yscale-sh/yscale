@@ -39,7 +39,7 @@ The technical identifiers listed below remain unchanged. Existing installations 
 | Selector label | `app.kubernetes.io/name: yscale-agent` | unchanged (immutable on live workloads) |
 | Component label (additive) | `app.kubernetes.io/component: cluster-connector` | **added** to common labels; not a selector |
 | Binary | `yscale-agent` | unchanged |
-| Container image | `ghcr.io/yscale-sh/yscale-cluster-agent` | public, published by each release; the default tag is the chart's `appVersion` |
+| Container image | `ghcr.io/yscale-sh/yscale-cluster-agent` | Build from `agent/build/Dockerfile.agent.buildkit` and push to your own registry. The `ghcr.io/yscale-sh` default is private. Set `agent.image.repository` and `agent.image.tag` (or `agent.image.digest`) in the chart, and `imagePullSecrets` for a private registry, e.g. `imagePullSecrets[0].name`. |
 | API routes | `/v1/agent/*` | unchanged |
 | Config / env / JSON fields, metrics, dashboards | `YSCALE_*`, `yscale_agent_*`, etc. | unchanged |
 | MagicDNS hostname | `yscale-agent-<cluster-id>` | unchanged |

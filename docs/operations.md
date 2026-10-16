@@ -55,3 +55,10 @@ Readiness applies to the configuration tested. Source availability and passing l
 ```sh
 go run ./cmd/yscale-launch-readiness readiness -manifest docs/release/manifest.json
 ```
+
+## Troubleshooting: burst does not join after credential mint
+
+Bootstrap grants are single-use after a successful credential mint. If a burst
+never joins after central logged the mint, the response may have been lost.
+Tear down that burst and resubmit the workload to create a new burst.
+Re-announcing the same `BurstID` does not reset the grant.

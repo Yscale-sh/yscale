@@ -90,21 +90,23 @@ idleTeardown:
 # teardown, but central bounds the capacity at admission rather than on silence.
 occupancyObserveInterval: 5m
 
-# imagePullSecrets are applied to the pod spec. The default image below is
-# public, so none is needed. If you build your own agent image into a private
-# registry, name its pull secret here:
+# imagePullSecrets are applied to the pod spec. The ghcr.io/yscale-sh default
+# is private and cannot be pulled by other users. Fork the repo and publish
+# with its images workflow, or build locally and push to your own registry.
+# Override the repository; for a private package, name your pull secret here:
 #
 #   --set agent.image.repository=<your-registry>/yscale-cluster-agent \
+#   --set agent.image.tag=<your-pushed-tag> \
 #   --set 'imagePullSecrets[0].name=<your-secret>'
 imagePullSecrets: []
 
 # --- Agent container ---
 agent:
   image:
-    # Published by this repository's release workflow for linux/amd64 and
-    # linux/arm64. An empty tag means the chart's appVersion: the release this
-    # chart shipped in. Pin `digest` from the release's images.txt in
-    # production.
+    # Private maintainer image placeholder; replace with your own repository.
+    # Your fork's images workflow builds linux/amd64 and linux/arm64 images.
+    # An empty tag means the chart's appVersion. Set your pushed tag, or pin
+    # `digest` from YOUR workflow's digest artifact or registry in production.
     repository: ghcr.io/yscale-sh/yscale-cluster-agent
     tag: ""
     # Optional immutable pin. When non-empty this takes precedence over `tag`

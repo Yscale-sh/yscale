@@ -67,8 +67,8 @@ make build
 
 `make build` includes `yscale`, `yscale-cloud`, `yscale-agent`,
 `yscale-factory` and `yscale-lifecycle-migrate`.
-The CLI alone is not the control plane. `make run` starts central; the older
-standalone Fly controller is explicitly available as `make run-legacy-controller`.
+The CLI alone is not the control plane. `make run` starts central; use
+`./bin/yscale help` for CLI commands.
 
 Tagged release archives contain the same binaries plus provisioning templates,
 charts and these docs. Run the factory with the extracted archive root as its
@@ -143,7 +143,7 @@ Central's listener is plain HTTP; terminate TLS at your own ingress or proxy
 before allowing remote agents or users. Set `YSCALE_CENTRAL_ENDPOINT` to your
 reachable endpoint so generated install instructions point to your deployment.
 Keep both central and factory at one replica until their cache/read-source
-constraints are addressed. Legacy `deploy/cloud` examples need adaptation to
+constraints are addressed. The `deploy/cloud` manifests need adaptation to
 your secrets, registries, database and private-network wiring; do not apply
 them unchanged as a production installer.
 
@@ -157,8 +157,7 @@ private: it contains a credential. No Yscale identity provider is required for
 the operator-token path; human-account/console login is separate configuration.
 
 Wait for the tenant's fabric to be ready before installing the connector.
-Use [the agent chart](../deploy/helm/yscale-agent), not the legacy
-`deploy/helm/yscale` controller chart. Set its `endpoint` to your central and
+Use [the agent chart](../deploy/helm/yscale-agent). Set its `endpoint` to your central and
 use an `existingSecret` carrying the tenant's `YSCALE_TOKEN`. Retain the
 default full-network gateway. Configure your cluster CIDRs, apiserver reachability
 and immutable operator-built images; gateway requirements differ by cluster.
@@ -170,7 +169,7 @@ use Tailscale SaaS. `managedMesh: true` is the chart default: both clients stop
 if no login server is available instead of silently joining shared coordination.
 If using pre-minted keys instead, explicitly set both
 `tailscale.tsLoginServer` and `gateway.tsLoginServer` to the tenant's Headscale
-URL. Only an intentional legacy install should set `managedMesh: false`.
+URL. Keep `managedMesh: true` so both clients require the tenant's managed mesh.
 
 ### Operator tenant and connector recipe
 

@@ -26,9 +26,8 @@ permissions:
 jobs:
   image:
     name: ${{ matrix.image }}
-    # Publish only from the public repository; a mirror (such as the private
-    # monorepo) must never push public images under its own owner.
-    if: github.repository == 'Yscale-sh/yscale'
+    # Forks publish under their own owner; never publish from pull requests.
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false

@@ -4,7 +4,7 @@ Yscale is a self-hosted Kubernetes burst controller. It adds temporary CPU or su
 
 An operator installs central, the factory and the Cluster Connector. Workload authors continue using `kubectl`, Git or existing Flux/Argo workflows; they do not install a separate control plane or laptop VPN application.
 
-Yscale is experimental, source-available software, not a hosted service or a one-command production installer. Operators currently build their own images and configure networking for their cluster. Begin with [operator setup](self-hosted-mesh.md) for infrastructure and mesh requirements.
+Yscale is experimental, source-available software, not a hosted service or a one-command production installer. Begin with the [Quickstart](quickstart.md): clone the repo and host your own images using your fork's GitHub Actions workflow, or build locally and push to your registry. The project's own `ghcr.io/yscale-sh` packages are private and cannot be pulled by other users. See [operator setup](self-hosted-mesh.md) for infrastructure and mesh requirements.
 
 ## 1. Build from source
 
@@ -75,8 +75,10 @@ The operator supplies:
 - Central and factory services, separate Postgres state, TLS, encryption keys,
   backups and a private network for factory callbacks.
 - Cloud-provider accounts, quotas and narrowly scoped credentials.
-- Operator-built connector and burst images. Private maintainer image defaults
-  are not pullable by new users. Native bundles do not remove this requirement.
+- Your own connector, central and factory container images, published by your
+  fork's workflow or built locally, plus provider-specific burst images. Private
+  maintainer image defaults are not pullable by new users. Native bundles do
+  not remove this requirement.
 - Linode for the current factory's persistent Headscale/DERP boxes, even if
   workers use a different provider; a separate self-hosted Headscale coordinator
   for the private ops mesh. No Tailscale account or subscription is required.
@@ -87,19 +89,116 @@ The operator supplies:
   worker VMs, disks and networking. Software budget fields are not hard caps
   on the provider bill.
 
-For a Linux amd64 connector image, this existing Make target accepts your own
-registry instead of the private default. From a **source checkout**, with
-Docker Buildx and registry authentication already configured:
+### Build and publish your images
+
+From a **source checkout**, install Docker Buildx and authenticate to a registry
+you control (`docker login ghcr.io` for the example below). Replace `example`
+with your own user or organization. Publish all five images with one target:
 
 ```sh
-: "${YSCALE_CONNECTOR_IMAGE:?Set your registry/repository:version}"
-make agent-image-build FLY_AGENT_IMAGE="$YSCALE_CONNECTOR_IMAGE"
-docker push "$YSCALE_CONNECTOR_IMAGE"
+export IMAGE_REGISTRY=ghcr.io/example
+export TAG=v0.0.2-preview
+export PLATFORM=linux/amd64
+make all-images-push IMAGE_REGISTRY="$IMAGE_REGISTRY" TAG="$TAG" PLATFORM="$PLATFORM"
 ```
 
-Resolve and pin the pushed digest in the chart. The variable's historical
-`FLY_` name does not require a Fly registry. Other service images and each
-provider's burst image/AMI still need their own build and configuration.
+`IMAGE_REGISTRY` is the registry plus repository prefix, without a trailing
+slash. `TAG` applies to every image. Individual overrides are `FLY_AGENT_IMAGE`,
+`FLY_CLOUD_IMAGE`, `FLY_FACTORY_IMAGE`, `FLY_BURST_BASE_IMAGE` and
+`FLY_BURST_IMAGE`; their historical names do not require a Fly registry.
+Make passes `FLY_BURST_BASE_IMAGE` as the kubelet Dockerfile's `BASE_IMAGE` and
+publishes the base before building the kubelet overlay, including with `make -j`.
+
+The equivalent direct commands below all use the **source root** as context.
+The connector, cloud and factory BuildKit Dockerfiles compile from source;
+the cloud image also includes `yscale-lifecycle-migrate`, and the factory
+includes its coordination-box provisioning templates.
+
+```sh
+docker buildx build --platform "$PLATFORM" \
+  -f agent/build/Dockerfile.agent.buildkit --build-arg VERSION="$TAG" \
+  --push -t "$IMAGE_REGISTRY/yscale-cluster-agent:$TAG" .
+docker buildx build --platform "$PLATFORM" \
+  -f central/build/Dockerfile.cloud.buildkit \
+  --push -t "$IMAGE_REGISTRY/yscale-cloud:$TAG" .
+docker buildx build --platform "$PLATFORM" \
+  -f factory/build/Dockerfile.factory.buildkit \
+  --push -t "$IMAGE_REGISTRY/yscale-factory:$TAG" .
+
+# Fly burst node: publish the base first, then the kubelet overlay.
+docker buildx build --platform linux/amd64 \
+  -f burst/image/Dockerfile.kubelet.base \
+  --push -t "$IMAGE_REGISTRY/yscale-burst-base:$TAG" .
+docker buildx build --platform linux/amd64 \
+  -f burst/image/Dockerfile.kubelet \
+  --build-arg BASE_IMAGE="$IMAGE_REGISTRY/yscale-burst-base:$TAG" \
+  --push -t "$IMAGE_REGISTRY/yscale-burst-image:$TAG" .
+```
+
+The three service images support `linux/amd64` or `linux/arm64`; for both, use
+`PLATFORM=linux/amd64,linux/arm64` with the direct `--push` commands. Make's
+`--load` targets accept one platform. The burst Dockerfiles are **amd64-only**:
+the base downloads hardcode amd64 and would need to become `TARGETARCH`-aware
+before an arm64 burst build is valid. The aggregate Make target therefore
+requires `PLATFORM=linux/amd64`; build services separately for arm64 clusters.
+
+Use a registry your burst provider can pull from. For a private Fly registry,
+create the burst/base apps in your own Fly organization, run `flyctl auth docker`,
+and set `FLY_BURST_BASE_IMAGE` and `FLY_BURST_IMAGE` to their
+`registry.fly.io/<your-app>:$TAG` references. Kubernetes `imagePullSecrets` only
+authenticate pod pulls; they do not grant a Fly Machine access to a private GHCR
+package. Other providers still require their own account-owned VM images/AMIs;
+these container builds do not create them. See the [Quickstart](quickstart.md)
+for the Linode image bake and the [operator guide](self-hosted-mesh.md) for
+provider setup.
+
+### Pin the images you published
+
+Inspect each pushed image; copy its top-level `Digest: sha256:...` value, rather
+than a platform-specific child digest when deploying a multi-platform image:
+
+```sh
+for image in yscale-cluster-agent yscale-cloud yscale-factory yscale-burst-base yscale-burst-image; do
+  docker buildx imagetools inspect "$IMAGE_REGISTRY/$image:$TAG"
+done
+```
+
+Set these values in your connector Helm values file, replacing the example
+repository and digest with your own. `agent.image.digest` takes precedence over
+the tag, and `requireDigest` rejects an unpinned install:
+
+```yaml
+agent:
+  image:
+    repository: ghcr.io/example/yscale-cluster-agent
+    digest: sha256:<connector-digest>
+    requireDigest: true
+# For a private package, create this Secret in the connector's namespace.
+# imagePullSecrets:
+#   - name: your-registry-pull-secret
+```
+
+Before applying `deploy/cloud/cloud.yaml` and `deploy/cloud/factory.yaml`,
+replace each container's `image:` line with its own digest reference:
+
+```yaml
+# deploy/cloud/cloud.yaml
+image: ghcr.io/example/yscale-cloud@sha256:<cloud-digest>
+# deploy/cloud/factory.yaml
+image: ghcr.io/example/yscale-factory@sha256:<factory-digest>
+```
+
+Use that same cloud digest for any lifecycle migration Job. For private images,
+create a registry pull secret in each Deployment's namespace and uncomment its
+`spec.template.spec.imagePullSecrets` example. The pinned maintainer image
+lines are release placeholders; they are private and must be replaced.
+
+On **central**, set `YSCALE_FLYIO_BURST_IMAGE` to your published kubelet image
+reference (for example `registry.fly.io/<your-burst-app>@sha256:<burst-digest>`).
+`YSCALE_BURST_IMAGE` is the shared runtime OCI default; set it to your own image
+where applicable. Neither variable changes Make's build tags. For a reproducible
+kubelet rebuild, `BASE_IMAGE` can also be an immutable
+`<your-registry>/yscale-burst-base@sha256:<base-digest>` reference.
 
 Follow the [managed-mesh deployment guide](self-hosted-mesh.md) in order:
 state and secrets → factory and private ops network → central → tenant →
@@ -127,7 +226,7 @@ capacity. This does not add a Jupyter hosting service or a VS Code extension.
 
 | Symptom | Check first |
 |---|---|
-| `ImagePullBackOff` | The default image is public; check the node can reach `ghcr.io`. A custom `agent.image.repository` needs its registry's pull secret in `imagePullSecrets`. |
+| `ImagePullBackOff` | The `ghcr.io/yscale-sh` defaults are private. Set `agent.image.repository` to your own published image and set its tag or digest; make your package public or reference its registry pull secret in top-level `imagePullSecrets`. |
 | Connector cannot reach central | Use your reachable HTTPS/WSS endpoint, valid TLS and the correct credential; an example `.invalid` hostname is deliberately unusable. |
 | Init container reports missing login server | Wait for real fabric readiness; confirm central can reach its factory. Do not disable managed-mesh validation to hide it. |
 | Fabric stays pending | Inspect factory provisioning and private callback connectivity; `FACTORY_DEV=1` cannot create a real mesh. |

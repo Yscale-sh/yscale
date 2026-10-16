@@ -1,6 +1,7 @@
 # Composite base for the burst-node image. Holds every heavy download
 # (kubelet, containerd, tailscale, CNI, runc) so iterations on
-# entrypoint-kubelet.sh only rebuild the final 5-line layer.
+# entrypoint-kubelet.sh only rebuild the final entrypoint layer.
+# amd64-only: downloads below hardcode amd64; TARGETARCH is not supported.
 #
 # Rebuild manually when bumping any *_VERSION arg below:
 #   make burst-base-image-push

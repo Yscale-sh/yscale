@@ -10,9 +10,10 @@ env secret as sensitive. Please take vulnerabilities in this codebase seriously
 
 **Do not open a public issue for a security vulnerability.**
 
-Report privately via **GitHub Security Advisories**: the repository's
-*Security* tab → *Report a vulnerability*. If that is unavailable, email the
-maintainer listed in the repository profile with subject `[yscale security]`.
+Report privately by emailing **[jakenesler@gmail.com](mailto:jakenesler@gmail.com)**
+with subject `[yscale security]`. GitHub private vulnerability reporting is
+currently disabled for this repository. When available, the repository's
+*Security* tab → *Report a vulnerability* is an alternative private channel.
 
 Please include: the affected component (central / agent / burst image / Helm
 chart), a reproduction or proof of concept, and the impact as you understand

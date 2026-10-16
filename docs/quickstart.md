@@ -22,39 +22,76 @@ shortest working path; each step links to the full guide.
 - `curl`, `jq`, `openssl` and the open-source Tailscale client. No Tailscale
   sign-up is involved.
 
-## 1. Get the release
+## 1. Clone the release and host your own images
 
-Download the bundle for the host that will run the factory and central, verify
-it, and unpack it:
+Clone the source for this release. For the GitHub workflow option below, fork
+the repository first and use your fork's clone URL instead:
 
 ```sh
 VERSION=v0.0.2-preview
+git clone --branch "$VERSION" https://github.com/yscale-sh/yscale.git
+cd yscale
+```
+
+The project's own `ghcr.io/yscale-sh` packages are private and will remain
+private; you cannot pull them. Host your own connector, central and factory
+images using either option:
+
+- **Fork and publish with GitHub Actions (recommended).** Fork the repo on
+  GitHub and push `main` or a release tag: the included `images` workflow
+  publishes linux/amd64 + linux/arm64 images to
+  `ghcr.io/<your-org>/yscale-{cluster-agent,cloud,factory}`. A push to `main`
+  publishes `edge` and `sha-<short>`; a `v*` tag matching the release version
+  pins invokes it through the release workflow and publishes that tag. Make
+  the packages public or add an `imagePullSecret` for your registry credentials
+  to each deployment that pulls them.
+- **Build locally and push to any registry.** Use
+  `agent/build/Dockerfile.agent.buildkit`,
+  `central/build/Dockerfile.cloud.buildkit` and
+  `factory/build/Dockerfile.factory.buildkit`, with the source root as the
+  build context. Build with Docker Buildx for your target platforms and push
+  the resulting `yscale-cluster-agent`, `yscale-cloud` and `yscale-factory`
+  images to a registry you control.
+
+Exact commands, including `make all-images-push`, the burst base/kubelet builds
+and digest pinning, are in [Build and publish your images](getting-started.md#build-and-publish-your-images).
+
+If deploying central and the factory with the Kubernetes examples, edit the
+container `image:` line in each file before applying it:
+
+| File | Replacement image line (replace `<your-org>`) |
+|---|---|
+| `deploy/cloud/cloud.yaml` | `image: ghcr.io/<your-org>/yscale-cloud:v0.0.2-preview` |
+| `deploy/cloud/factory.yaml` | `image: ghcr.io/<your-org>/yscale-factory:v0.0.2-preview` |
+
+Use your registry's paths and the tag you actually pushed (`edge` for a `main`
+build), or pin each image by its own digest. For private images, create a pull
+secret in each Deployment's namespace and reference it under
+`spec.template.spec.imagePullSecrets`. The connector's chart settings are shown
+in step 6. These manifests also need your environment and mesh configuration;
+steps 3 and 4 below run the native binaries instead.
+
+For those native commands, download the bundle for the factory/central host,
+verify it, and extract its binaries into this source checkout:
+
+```sh
 TARGET=linux-amd64
 base=https://github.com/yscale-sh/yscale/releases/download/$VERSION
 curl -fLO "$base/yscale-$VERSION-$TARGET.tar.gz"
 curl -fLO "$base/yscale-$VERSION-$TARGET.tar.gz.sha256"
 sha256sum -c "yscale-$VERSION-$TARGET.tar.gz.sha256"
-tar -xzf "yscale-$VERSION-$TARGET.tar.gz" && cd "yscale-$VERSION-$TARGET"
+tar -xzf "yscale-$VERSION-$TARGET.tar.gz" --strip-components=1 "yscale-$VERSION-$TARGET/bin"
 node examples/local-managed-mesh-smoke.mjs .   # optional no-cloud check
 ```
 
-Clone the same release of the source as well; the connector chart and the
-burst-image script come from it:
+Alternatively, build those binaries from this checkout with `make build` using
+Make and the Go version specified in [go.mod](../go.mod).
 
-```sh
-git clone --branch "$VERSION" https://github.com/yscale-sh/yscale.git
-```
-
-- **Connector image.** Published with every release as
-  `ghcr.io/yscale-sh/yscale-cluster-agent:$VERSION` (linux/amd64 and
-  linux/arm64), and the chart defaults to it. The release's `images.txt` lists
-  its digest. To build your own instead, use
-  `agent/build/Dockerfile.agent.buildkit` with the source root as context.
-- **Linode burst image.** Run
-  `LINODE_TOKEN=... SMOKE_PUBKEY="$(cat ~/.ssh/id_ed25519.pub)" SSH_PRIVKEY=~/.ssh/id_ed25519 ./pkg/backends/linode/bake-cpu-image.sh`.
-  The bake polls the build VM over SSH, so a key pair is required. It prints
-  a `private/<id>` image. Linode images belong to the account that baked them,
-  so you must bake your own.
+**Linode burst image.** Run
+`LINODE_TOKEN=... SMOKE_PUBKEY="$(cat ~/.ssh/id_ed25519.pub)" SSH_PRIVKEY=~/.ssh/id_ed25519 ./pkg/backends/linode/bake-cpu-image.sh`.
+The bake polls the build VM over SSH, so a key pair is required. It prints
+a `private/<id>` image. Linode images belong to the account that baked them,
+so you must bake your own.
 
 ## 2. Run the operations Headscale
 
@@ -185,13 +222,29 @@ rbac:
   allowedNamespaces: [yscale-apps]
 agent:
   image:
-    digest: sha256:<yscale-cluster-agent digest from the release's images.txt>
+    repository: ghcr.io/<your-org>/yscale-cluster-agent
+    digest: sha256:<64 lowercase hex characters from YOUR pushed connector image>
     requireDigest: true
 bootstrap:
   apiserverURL: https://10.0.0.10:6443
 gateway:
   enabled: true
   advertiseRoutes: ["10.42.0.0/16", "10.43.0.0/16", "10.0.0.0/24"]
+```
+
+Set `agent.image.repository` to your own image path and `agent.image.digest`
+to its pushed digest (from your workflow's digest artifact or your registry).
+A digest takes precedence over `agent.image.tag`. To use a tag instead, set
+`agent.image.tag` to the tag you pushed, `agent.image.digest` to `""` and
+`agent.image.requireDigest` to `false`; an empty tag defaults to the chart's
+`appVersion`.
+
+For a private package, create a registry pull secret named `registry-credentials`
+in `yscale-system`, then add this top-level setting to `connector-values.yaml`:
+
+```yaml
+imagePullSecrets:
+  - name: registry-credentials
 ```
 
 Use your own pod, service and node CIDRs in `advertiseRoutes`. Then install the

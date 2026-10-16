@@ -4,7 +4,14 @@
 # ServiceAccount, Secret, and Postgres database, per docs/design/factory-service.md §5-6.
 #
 # OPERATOR PREREQUISITES (this file is a template; see deploy/runbooks/factory.md):
-#   1. Build + push the image (factory/build/Dockerfile.factory) to <registry>/yscale-factory.
+#   1. Fork the repo and publish with its images workflow, or build locally from
+#      factory/build/Dockerfile.factory.buildkit and push to your own registry.
+#      `make factory-image-push IMAGE_REGISTRY=<your-registry> TAG=<your-tag>`
+#      builds and publishes that Dockerfile from the source root.
+#      The ghcr.io/yscale-sh image below is private; replace its image: line with
+#      your own repository and pushed tag/digest before applying this template.
+#      For a private image, add spec.template.spec.imagePullSecrets referencing
+#      a registry pull secret in namespace yscale-factory.
 #   2. Create Secret `yscale-factory-secrets` (below lists the required keys).
 #   3. Provision a factory Postgres DATABASE (separate from central's) on the
 #      dev-datastores instance; put its DSN in the Secret.
@@ -40,6 +47,9 @@ spec:
       labels:
         app.kubernetes.io/name: yscale-factory
     spec:
+      # For a private operator image; create this Secret in yscale-factory.
+      # imagePullSecrets:
+      #   - name: your-registry-pull-secret
       containers:
         - name: yscale-factory
           image: ghcr.io/yscale-sh/yscale-factory:v0.0.2-preview

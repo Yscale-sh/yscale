@@ -6,19 +6,19 @@ Yscale adds temporary compute capacity to an existing Kubernetes cluster.
 Submit a workload, provision a node through a cloud backend, run ordinary
 Kubernetes pods, and release the capacity when the workload finishes.
 
-Run it yourself with your own infrastructure and provider accounts. This is a
-full-source project, not a hosted-service launch or a limited-feature edition.
-Yscale is distributed as self-hosted software; we do not offer a managed
-Yscale hosting service. Paid resale/hosting licenses authorize other operators
-to provide their own offerings, not access to a service operated by us.
-The control plane, cluster connector, provider adapters, fabric factory and
-tenant-management implementations are included in this repository.
+**Start here:** fork or clone the repository, then [build and host your own
+images](docs/quickstart.md). Yscale is licensed under the source-available
+[Yscale Community License 1.0](LICENSE).
 
 **The default release is the full managed-mesh version, including self-hosted
 installs.** You run central and the factory, which manages your tenants'
-Headscale/DERP coordination boxes. Start with [Getting started](docs/getting-started.md)
-for downloads, a no-cloud local check and the operator/user handoff. Then use
-the [self-hosted managed-mesh guide](docs/self-hosted-mesh.md) to deploy it.
+Headscale/DERP coordination boxes. Start with the [Quickstart](docs/quickstart.md):
+clone the repo and host your own images, using your fork's GitHub Actions
+workflow or local builds pushed to your registry. The project's own
+`ghcr.io/yscale-sh` packages are private and cannot be pulled by other users.
+See [Getting started](docs/getting-started.md) for a no-cloud local check and the
+operator/user handoff, and the [self-hosted managed-mesh guide](docs/self-hosted-mesh.md)
+for the full deployment setup.
 
 [Documentation](docs/README.md) · [Your first workload](docs/first-workload.md) ·
 [Introducing Yscale](docs/articles/introducing-yscale.md)
@@ -73,9 +73,9 @@ but this source release does not activate a hosted service.
   joining burst by its BurstID, which also forms the node name. Keep that
   endpoint reachable only over the tailnet; it must never be exposed to
   workload pods or the public internet.
-- **Unqualified paths.** Hosted multi-tenant operation, GCP and Azure bursts,
-  AWS GPU bursts and the LKE/EKS/GKE/AKS target variants have no live
-  qualification in this release; treat them as experimental.
+- **Unqualified paths.** Only k3s with Linode CPU and GPU bursts is
+  live-validated; Fly, AWS, GCP and Azure bursts, multi-tenant operation and
+  the LKE/EKS/GKE/AKS targets are experimental.
 - **Persistent storage is reserved, not mounted.** `spec.storage.persistent`
   is validated and reserved by central, but the burst Job does not yet mount
   it. Do not rely on it for durability in this preview; use cache or artifact
@@ -91,16 +91,15 @@ the local regression tests. No cloud account is needed for the unit suite.
 
 ```sh
 git clone https://github.com/yscale-sh/yscale.git
-cd Yscale
+cd yscale
 GOFLAGS=-p=2 make build
 ./bin/yscale help
 go test -p=2 ./...
 ```
 
 The CLI includes workload submission, template catalog commands and manifest
-injection. Running it without a subcommand starts the legacy controller, which
-this release does not package or ship an image for; use `help` when exploring
-without provisioning anything.
+injection. Running it without a subcommand prints usage and exits with status 2;
+use `help` to display usage with a successful exit status.
 
 The default build and tagged release archives include central, agent, factory,
 CLI and the lifecycle migration tool. No enterprise tag or export step
@@ -135,7 +134,7 @@ managed hosting, an SLA, or guaranteed cloud-cost ceilings.
 
 ## Repository map
 
-- `cmd/yscale/` — CLI (plus the unpackaged legacy controller mode)
+- `cmd/yscale/` — CLI for workload submission, template catalogs and manifest injection
 - `central/` — control plane, placement, lifecycle and account APIs
 - `agent/` — Kubernetes cluster connector
 - `burst/` — burst-node images and bootstrap components
@@ -159,12 +158,20 @@ customer data or private cluster configuration in issues or pull requests.
 
 ## License
 
+Run it yourself with your own infrastructure and provider accounts. This is a
+full-source project, not a hosted-service launch. Yscale is distributed as
+self-hosted software; we do not offer a managed Yscale hosting service.
+The control plane, cluster connector, provider adapters, fabric factory and
+tenant-management implementations are included in this repository.
+
 Yscale is **source-available, not OSI open source**:
 
 - Personal use and internal self-hosting are free of license fees, regardless
   of company revenue or size, including internal use to run your own apps.
 - Reselling Yscale or providing its functionality or brokered compute capacity
   to third parties as a hosted/managed service requires a separate paid license.
+  These licenses authorize other operators to provide their own offerings,
+  not access to a service operated by us.
 - All application features are in this source distribution; no separate
   proprietary edition is required for internal use. Third-party licenses remain
   unchanged. Historical proprietary-source markers belong to the old export
