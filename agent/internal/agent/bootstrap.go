@@ -121,7 +121,18 @@ type burstGrant struct {
 	// A successful mint consumes only bootstrap permission, not storage or telemetry.
 	consumed bool
 	minting  bool
+	// response is the exact body of the successful mint. Bootstrap clients
+	// retry on any error (curl --retry-all-errors), so a retry after a slow or
+	// dropped response must receive the same credentials instead of a 403 that
+	// strands the node. Replay stops as soon as the Node object exists (a pod
+	// cannot run on the node before that) or the replay window closes.
+	response []byte
+	mintedAt time.Time
 }
+
+// bootstrapReplayWindow bounds how long a consumed grant replays its minted
+// response to repeat requests while the node has not registered yet.
+const bootstrapReplayWindow = 10 * time.Minute
 
 // NewBootstrapServer reads the API server URL and CA bundle from the
 // in-cluster service-account mount. Errors out if either is missing —
@@ -386,8 +397,22 @@ func (s *BootstrapServer) handleBootstrap(w http.ResponseWriter, r *http.Request
 
 	s.mu.Lock()
 	grant := s.grants[req.BurstID]
-	if grant == nil || grant.consumed {
+	if grant == nil {
 		s.mu.Unlock()
+		s.Log.Warn("rejected bootstrap: unknown burst id", "burst", req.BurstID, "node", req.NodeName)
+		http.Error(w, "unauthorized burst id", http.StatusForbidden)
+		return
+	}
+	if grant.consumed {
+		replay, age := grant.response, time.Since(grant.mintedAt)
+		s.mu.Unlock()
+		if len(replay) > 0 && age < bootstrapReplayWindow && !s.nodeRegistered(r.Context(), req.NodeName) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(replay)
+			s.Log.Info("replayed bootstrap response", "burst", req.BurstID, "node", req.NodeName, "age", age.Round(time.Second))
+			return
+		}
+		s.Log.Warn("rejected bootstrap: grant already consumed", "burst", req.BurstID, "node", req.NodeName, "age", age.Round(time.Second))
 		http.Error(w, "unauthorized burst id", http.StatusForbidden)
 		return
 	}
@@ -458,13 +483,7 @@ func (s *BootstrapServer) handleBootstrap(w http.ResponseWriter, r *http.Request
 		s.Log.Warn("issue cilium kubeconfig (continuing without)", "error", err)
 	}
 
-	// Consume after successful credential creation, even if delivery fails.
-	s.mu.Lock()
-	grant.consumed = true
-	s.mu.Unlock()
-
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(BootstrapResponse{
+	body, err := json.Marshal(BootstrapResponse{
 		Kubeconfig:       kubeconfig,
 		CiliumKubeconfig: ciliumKC,
 		Storage:          bindings,
@@ -472,12 +491,39 @@ func (s *BootstrapServer) handleBootstrap(w http.ResponseWriter, r *http.Request
 		GatewayRoutes:    s.GatewayRoutes,
 		CloudProvider:    s.CloudProvider,
 	})
+	if err != nil {
+		s.Log.Error("encode bootstrap response", "error", err)
+		http.Error(w, "encode bootstrap response", http.StatusInternalServerError)
+		return
+	}
+
+	// Consume after successful credential creation, even if delivery fails;
+	// the minted body is kept so a client retry replays it (see burstGrant).
+	s.mu.Lock()
+	grant.consumed = true
+	grant.response = body
+	grant.mintedAt = time.Now()
+	s.mu.Unlock()
+
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write(body)
 	s.Log.Info("issued bootstrap kubeconfig",
 		"burst", req.BurstID, "node", req.NodeName, "credential_mode", credentialMode, "token_id", tokenID,
 		"cilium_kubeconfig_bytes", len(ciliumKC),
 		"storage_bindings", len(bindings),
 		"gateway_hostname", s.GatewayHostname,
 		"gateway_routes", s.GatewayRoutes)
+}
+
+// nodeRegistered reports whether the Node object for a burst exists. Once it
+// does, workload pods can be scheduled onto it, so a bootstrap replay would
+// hand node credentials to a pod and the grant must lock.
+func (s *BootstrapServer) nodeRegistered(ctx context.Context, nodeName string) bool {
+	if s.K8s == nil {
+		return false
+	}
+	_, err := s.K8s.CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
+	return err == nil
 }
 
 // issueCiliumKubeconfig mints a JWT for the cilium ServiceAccount in
