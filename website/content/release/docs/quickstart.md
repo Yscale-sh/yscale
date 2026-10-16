@@ -28,7 +28,7 @@ Clone the source for this release. For the GitHub workflow option below, fork
 the repository first and use your fork's clone URL instead:
 
 ```sh
-VERSION=v0.0.2-preview
+VERSION=v0.0.3-preview
 git clone --branch "$VERSION" https://github.com/yscale-sh/yscale.git
 cd yscale
 ```
@@ -61,8 +61,8 @@ container `image:` line in each file before applying it:
 
 | File | Replacement image line (replace `<your-org>`) |
 |---|---|
-| `deploy/cloud/cloud.yaml` | `image: ghcr.io/<your-org>/yscale-cloud:v0.0.2-preview` |
-| `deploy/cloud/factory.yaml` | `image: ghcr.io/<your-org>/yscale-factory:v0.0.2-preview` |
+| `deploy/cloud/cloud.yaml` | `image: ghcr.io/<your-org>/yscale-cloud:v0.0.3-preview` |
+| `deploy/cloud/factory.yaml` | `image: ghcr.io/<your-org>/yscale-factory:v0.0.3-preview` |
 
 Use your registry's paths and the tag you actually pushed (`edge` for a `main`
 build), or pin each image by its own digest. For private images, create a pull

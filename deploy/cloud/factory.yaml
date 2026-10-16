@@ -52,7 +52,7 @@ spec:
       #   - name: your-registry-pull-secret
       containers:
         - name: yscale-factory
-          image: ghcr.io/yscale-sh/yscale-factory:v0.0.2-preview
+          image: ghcr.io/yscale-sh/yscale-factory:v0.0.3-preview
           imagePullPolicy: Always
           ports:
             - { name: fabric, containerPort: 8080, protocol: TCP } # central-facing (bearer)

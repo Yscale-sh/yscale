@@ -97,7 +97,7 @@ with your own user or organization. Publish all five images with one target:
 
 ```sh
 export IMAGE_REGISTRY=ghcr.io/example
-export TAG=v0.0.2-preview
+export TAG=v0.0.3-preview
 export PLATFORM=linux/amd64
 make all-images-push IMAGE_REGISTRY="$IMAGE_REGISTRY" TAG="$TAG" PLATFORM="$PLATFORM"
 ```
