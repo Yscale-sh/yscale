@@ -26,8 +26,10 @@ permissions:
 jobs:
   image:
     name: ${{ matrix.image }}
-    # Forks publish under their own owner; never publish from pull requests.
-    if: github.event_name != 'pull_request'
+    # Forks publish under their own owner on every push; never from pull requests.
+    # The upstream repository publishes only on release tags, so its private
+    # GHCR storage does not grow with every commit to main.
+    if: github.event_name != 'pull_request' && (github.repository != 'Yscale-sh/yscale' || startsWith(github.ref, 'refs/tags/'))
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
