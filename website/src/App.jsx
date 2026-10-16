@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { useRoute } from "./lib/router.jsx";
 import { Nav } from "./components/Nav.jsx";
 import { Footer } from "./components/Footer.jsx";
-import { Unsubscribe } from "./pages/Unsubscribe.jsx";
 import { Console } from "./pages/Console.jsx";
 import { Account } from "./pages/Account.jsx";
 import { Callback } from "./pages/Callback.jsx";
@@ -26,8 +25,6 @@ function useIsMobile() {
 
 function pageFor(path, isMobile) {
   switch (path) {
-    case "/unsubscribe":
-      return <Unsubscribe isMobile={isMobile} />;
     case "/open-source":
     case "/source-available":
       return <SourceAvailable />;

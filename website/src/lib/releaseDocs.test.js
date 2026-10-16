@@ -34,6 +34,6 @@ test("LAN docs retain noindex, qualification guidance and no hosted signup", () 
     assert(result.includes("Local smoke tests use fake provisioning"));
     assert(result.includes('href="/docs/configuration-status.html"'));
     assert(!result.includes("DEV PREVIEW"));
-    assert(!result.includes("create account"));
+    assert(!/create\s+account/i.test(result));
   }
 });

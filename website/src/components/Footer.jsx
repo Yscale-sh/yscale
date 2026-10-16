@@ -27,9 +27,8 @@ export function Footer() {
             <a href="/docs/commercial.html">Commercial terms</a>
           </div>
           <div>
-            <span>ECOSYSTEM</span>
-            <a href="https://kubagachi.com">Kubagachi</a>
-            <a href="https://market.kubagachi.com">KubeKritter</a>
+            <span>RESOURCES</span>
+            <a href="https://github.com/Yscale-sh/yscale">GitHub</a>
             <a href="mailto:yscale@unbelievablesite.com">Contact</a>
           </div>
         </nav>

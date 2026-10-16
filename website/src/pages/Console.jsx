@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { SIGNUP_URL } from "../lib/identity.js";
 import { Link } from "../lib/router.jsx";
 
 const RANGES = {
@@ -252,7 +251,7 @@ export function Console() {
           </ol>
           <div className="console-next">
             <div><span>NEXT ACTION</span><strong>Verify your first cluster route.</strong></div>
-            <a href={SIGNUP_URL}>connect a cluster <span aria-hidden="true">↗</span></a>
+            <a href="/docs/quickstart.html">connect a cluster <span aria-hidden="true">↗</span></a>
           </div>
         </article>
       </section>

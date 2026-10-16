@@ -102,8 +102,9 @@ func validTokenForm() url.Values {
 }
 
 // The SPA owns /account and /callback: they must fall through to index.html
-// instead of bouncing to Yscale ID, while the other identity paths still 302.
+// instead of redirecting to the installation's configured identity provider.
 func TestSPAOwnsAccountRoutes(t *testing.T) {
+	t.Setenv("YSCALE_ID_URL", "https://identity.example.test")
 	h, _ := newTestApp(t, "")
 	for _, path := range []string{"/account", "/callback", "/workloads", "/workloads/new/pytorch-training", "/workloads/wl_1"} {
 		t.Run(path, func(t *testing.T) {

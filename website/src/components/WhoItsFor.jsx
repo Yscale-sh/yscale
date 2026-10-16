@@ -1,7 +1,6 @@
 // WHO IT'S FOR — the three real audiences, each sold their own outcome.
 // Platform engineers buy relief from capacity planning; AI/ML teams buy
 // "train tonight"; homelabbers buy datacenter muscles on a hobby budget.
-import { SIGNUP_URL } from "../lib/identity.js";
 
 const AUDIENCES = [
   {
@@ -14,7 +13,7 @@ const AUDIENCES = [
       "cloud credentials never touch your cluster",
       "budget + deadline reaper on every burst",
     ],
-    cta: { label: "create account →", href: SIGNUP_URL },
+    cta: { label: "read the quickstart →", href: "/docs/quickstart.html" },
   },
   {
     eyebrow: "AI / ML TEAMS",
@@ -26,7 +25,7 @@ const AUDIENCES = [
       "$ per epoch — not $ per month",
       "kubectl logs & exec work mid-run",
     ],
-    cta: { label: "create account →", href: SIGNUP_URL },
+    cta: { label: "read the quickstart →", href: "/docs/quickstart.html" },
   },
   {
     eyebrow: "HOMELABBERS",
@@ -38,7 +37,7 @@ const AUDIENCES = [
       "cloud cost estimates for each experiment",
       "one Helm chart; nothing else to run in-cluster",
     ],
-    cta: { label: "create account →", href: SIGNUP_URL },
+    cta: { label: "read the quickstart →", href: "/docs/quickstart.html" },
   },
 ];
 

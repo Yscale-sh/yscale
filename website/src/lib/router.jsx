@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { handleLinkClick } from "./routerNavigation.js";
 
-// Tiny pathname router. Real paths (/drops, /drops/001, /unsubscribe) work
+// Tiny pathname router. Real paths (/account, /console, /workloads) work
 // because both vite dev and the Go server SPA-fallback unknown paths to
 // index.html. Hash fragments still work for in-page anchors (/#access).
 

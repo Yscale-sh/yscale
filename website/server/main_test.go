@@ -67,7 +67,8 @@ func TestVanityRedirect(t *testing.T) {
 	}
 }
 
-func TestIdentityRedirectUsesWebsiteEnvironment(t *testing.T) {
+func TestIdentityRedirectUsesInstallationEnvironment(t *testing.T) {
+	t.Setenv("YSCALE_ID_URL", "https://identity.example.test/")
 	h, _ := newTestApp(t, "")
 	tests := []struct {
 		name string
@@ -79,25 +80,25 @@ func TestIdentityRedirectUsesWebsiteEnvironment(t *testing.T) {
 			name: "dev preview",
 			host: "yscale-dev.yscale.sh",
 			path: "/login",
-			want: "https://id-dev.yscale.sh/login?return_to=%2Faccount",
+			want: "https://identity.example.test/login?return_to=%2Faccount",
 		},
 		{
 			name: "LAN preview",
 			host: "10.0.0.218:8080",
 			path: "/signup",
-			want: "https://id-dev.yscale.sh/signup?return_to=%2Faccount",
+			want: "https://identity.example.test/signup?return_to=%2Faccount",
 		},
 		{
 			name: "production apex",
 			host: "yscale.sh",
 			path: "/waitlist",
-			want: "https://id.kubagachi.com/signup?return_to=%2Faccount",
+			want: "https://identity.example.test/signup?return_to=%2Faccount",
 		},
 		{
 			name: "production www",
 			host: "www.yscale.sh:443",
 			path: "/access",
-			want: "https://id.kubagachi.com/signup?return_to=%2Faccount",
+			want: "https://identity.example.test/signup?return_to=%2Faccount",
 		},
 	}
 
@@ -112,6 +113,35 @@ func TestIdentityRedirectUsesWebsiteEnvironment(t *testing.T) {
 			}
 			if got := rr.Header().Get("Location"); got != tt.want {
 				t.Fatalf("Location = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIdentityRoutesWithoutProvider(t *testing.T) {
+	for _, configuredURL := range []string{"", " \t "} {
+		t.Run(fmt.Sprintf("identity=%q", configuredURL), func(t *testing.T) {
+			t.Setenv("YSCALE_ID_URL", configuredURL)
+			h, _ := newTestApp(t, "")
+			for _, host := range []string{"yscale.sh", "www.yscale.sh", "yscale-dev.yscale.sh", "10.0.0.218:8080"} {
+				for route := range identityRedirects {
+					req := httptest.NewRequest(http.MethodGet, route, nil)
+					req.Host = host
+					rr := httptest.NewRecorder()
+					h.ServeHTTP(rr, req)
+					if rr.Code != http.StatusNotFound {
+						t.Fatalf("%s%s: status = %d, want 404", host, route, rr.Code)
+					}
+					if rr.Header().Get("Location") != "" {
+						t.Fatalf("%s%s: unexpected redirect", host, route)
+					}
+					if !strings.HasPrefix(rr.Header().Get("Content-Type"), "text/plain") {
+						t.Fatalf("%s%s: expected a plain text response", host, route)
+					}
+					if body := rr.Body.String(); !strings.Contains(body, "/docs/quickstart.html") || strings.Count(body, "\n") != 1 {
+						t.Fatalf("%s%s: expected a one-line quickstart notice", host, route)
+					}
+				}
 			}
 		})
 	}
@@ -218,16 +248,6 @@ func TestSignupRateLimit(t *testing.T) {
 	}
 }
 
-func postUnsubscribe(h http.Handler, body, remoteAddr string) *httptest.ResponseRecorder {
-	req := httptest.NewRequest(http.MethodPost, "/api/unsubscribe", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "test-agent")
-	req.RemoteAddr = remoteAddr
-	rr := httptest.NewRecorder()
-	h.ServeHTTP(rr, req)
-	return rr
-}
-
 func TestSignupDropsTrack(t *testing.T) {
 	h, signupPath := newTestApp(t, "")
 	if rr := postSignup(h, `{"email":"fan@kritters.dev","track":"drops"}`, "10.0.0.7:1234"); rr.Code != http.StatusOK {
@@ -243,56 +263,22 @@ func TestSignupDropsTrack(t *testing.T) {
 	}
 }
 
-func TestUnsubscribe(t *testing.T) {
-	t.Run("appends tombstone", func(t *testing.T) {
-		h, signupPath := newTestApp(t, "")
-		postSignup(h, `{"email":"a@b.co","track":"drops"}`, "10.0.1.1:1")
-		if rr := postUnsubscribe(h, `{"email":"a@b.co"}`, "10.0.1.1:1"); rr.Code != http.StatusOK {
-			t.Fatalf("status = %d, want 200", rr.Code)
-		}
-		data, _ := os.ReadFile(signupPath)
-		lines := strings.Split(strings.TrimSpace(string(data)), "\n")
-		if len(lines) != 2 {
-			t.Fatalf("file has %d lines, want 2 (append-only)", len(lines))
-		}
-		var rec signupRecord
-		if err := json.Unmarshal([]byte(lines[1]), &rec); err != nil {
-			t.Fatalf("unmarshal tombstone: %v", err)
-		}
-		if rec.Action != "unsubscribe" || rec.Email != "a@b.co" {
-			t.Errorf("tombstone = %+v", rec)
-		}
-	})
-	t.Run("ok even when never subscribed (no enumeration)", func(t *testing.T) {
-		h, _ := newTestApp(t, "")
-		if rr := postUnsubscribe(h, `{"email":"ghost@never.io"}`, "10.0.1.2:1"); rr.Code != http.StatusOK {
-			t.Errorf("status = %d, want 200", rr.Code)
-		}
-	})
-	t.Run("honeypot stores nothing", func(t *testing.T) {
-		h, signupPath := newTestApp(t, "")
-		if rr := postUnsubscribe(h, `{"email":"bot@spam.io","website":"x"}`, "10.0.1.3:1"); rr.Code != http.StatusOK {
-			t.Fatalf("status = %d, want 200", rr.Code)
-		}
-		if st, _ := os.Stat(signupPath); st.Size() != 0 {
-			t.Errorf("file size = %d, want 0", st.Size())
-		}
-	})
-	t.Run("bad email 400", func(t *testing.T) {
-		h, _ := newTestApp(t, "")
-		if rr := postUnsubscribe(h, `{"email":"nope"}`, "10.0.1.4:1"); rr.Code != http.StatusBadRequest {
-			t.Errorf("status = %d, want 400", rr.Code)
-		}
-	})
-}
-
 func TestExportEffective(t *testing.T) {
-	h, _ := newTestApp(t, "sekret")
+	h, signupPath := newTestApp(t, "sekret")
 	postSignup(h, `{"email":"keep@a.co","track":"drops"}`, "10.0.2.1:1")
 	postSignup(h, `{"email":"gone@b.co","track":"drops"}`, "10.0.2.2:1")
 	postSignup(h, `{"email":"resub@c.co","track":"drops"}`, "10.0.2.3:1")
-	postUnsubscribe(h, `{"email":"gone@b.co"}`, "10.0.2.2:1")
-	postUnsubscribe(h, `{"email":"resub@c.co"}`, "10.0.2.3:1")
+	// Historical tombstones remain readable even though their API is gone.
+	f, err := openAppend(signupPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	for _, email := range []string{"gone@b.co", "resub@c.co"} {
+		if err := json.NewEncoder(f).Encode(signupRecord{Email: email, Action: "unsubscribe"}); err != nil {
+			t.Fatal(err)
+		}
+	}
 	postSignup(h, `{"email":"resub@c.co","track":"drops"}`, "10.0.2.3:1") // re-subscribed after
 
 	req := httptest.NewRequest(http.MethodGet, "/api/signups?effective=1", nil)

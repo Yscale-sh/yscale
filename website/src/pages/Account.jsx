@@ -5,6 +5,7 @@ import { Link, useRoute } from "../lib/router.jsx";
 import { ApiError, fetchAccount, fetchMembers, removeMember } from "../lib/accountApi.js";
 import { ISSUER_URL, beginDevPreview, beginLogin, canSignIn, claimsOf, getSession, signOut } from "../lib/auth.js";
 import { canUseDevPreview } from "../lib/devPreview.js";
+import { identityConfigured } from "../lib/identity.js";
 import { canManageTenant } from "../lib/roles.js";
 
 // The Access Ledger. Same paper-and-ink accounting language as the Burst
@@ -98,7 +99,8 @@ function SignedOut({ onSignIn, onPreview, busy, error, expired }) {
             Your account,<br /><span>on the record.</span>
           </h1>
           <p className="acct-lede">
-            Sign in to view tenant roles, burst limits, spend caps, and member access.
+            To view tenant roles, burst limits, spend caps, and member access,
+            sign in with your installation's identity provider.
           </p>
           <p className="acct-note">
             Sessions stay in this tab and expire after one hour.
@@ -110,17 +112,25 @@ function SignedOut({ onSignIn, onPreview, busy, error, expired }) {
           {error && (
             <p className="acct-alert acct-alert-bad" role="alert">{error.message}</p>
           )}
-          {blocked && !error && (
+          {!identityConfigured && (
+            <p className="acct-note" role="status">
+              This deployment has no identity provider configured.{" "}
+              <a href="/docs/getting-started.html">Read the installation guide.</a>
+            </p>
+          )}
+          {identityConfigured && blocked && !error && (
             <p className="acct-alert acct-alert-bad" role="alert">
-              This origin cannot start a secure sign-in. Yscale ID needs an HTTPS
+              This origin cannot start a secure sign-in. Your identity provider needs an HTTPS
               address and session storage available.
             </p>
           )}
 
           <div className="acct-actions">
-            <button type="button" className="btn-solid" onClick={onSignIn} disabled={busy || blocked} aria-busy={busy}>
-              {busy ? "opening yscale id…" : "sign in with Yscale ID"} <span aria-hidden="true">↗</span>
-            </button>
+            {identityConfigured && (
+              <button type="button" className="btn-solid" onClick={onSignIn} disabled={busy || blocked} aria-busy={busy}>
+                {busy ? "opening identity provider…" : "sign in with your installation's identity provider"} <span aria-hidden="true">↗</span>
+              </button>
+            )}
             <Link to="/open-source" className="btn-ghost">what runs where <span aria-hidden="true">→</span></Link>
             {canUseDevPreview() && (
               <button type="button" className="btn-ghost" onClick={() => onPreview("first-workspace")}>
@@ -610,7 +620,7 @@ export function Account() {
     setSignInError(null);
     setExpired(false);
     try {
-      await beginLogin(); // navigates to Yscale ID on success
+      await beginLogin(); // navigates to the installation's identity provider
     } catch (err) {
       setSignInError(err);
       setSigningIn(false);
@@ -669,7 +679,7 @@ export function Account() {
             <span className="acct-kicker">READING THE LEDGER</span>
             <h1 className="acct-title display">Loading your account…</h1>
             <p className="acct-lede">
-              Signed in as <b>{claims?.email || claims?.name || "your Yscale ID"}</b>. Fetching tenants, roles, and limits.
+              Signed in as <b>{claims?.email || claims?.name || "your identity"}</b>. Fetching tenants, roles, and limits.
             </p>
             <div className="acct-skeleton" aria-hidden="true"><i /><i /><i /></div>
           </section>

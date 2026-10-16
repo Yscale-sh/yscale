@@ -20,11 +20,11 @@ export function SourceAvailable() {
       <section className="source-hero wrap" aria-labelledby="source-title">
         <ClusterField />
         <motion.p className="eyebrow" variants={heroRise} initial="hidden" animate="show" custom={0}>SELF-HOSTED KUBERNETES BURST COMPUTE</motion.p>
-        <h1 id="source-title"><motion.span className="hero-line" variants={heroRise} initial="hidden" animate="show" custom={1}>Add nodes from any cloud to your cluster</motion.span><br /> <motion.span className="hero-line hero-line-muted" variants={heroRise} initial="hidden" animate="show" custom={2}>when the workload demands it.</motion.span></h1>
+        <h1 id="source-title"><motion.span className="hero-line" variants={heroRise} initial="hidden" animate="show" custom={1}>Add Linode CPU and GPU nodes to your cluster</motion.span><br /> <motion.span className="hero-line hero-line-muted" variants={heroRise} initial="hidden" animate="show" custom={2}>when the workload demands it.</motion.span></h1>
         <div className="source-intro">
           <motion.div variants={heroRise} initial="hidden" animate="show" custom={3.5}>
-            <p className="source-lede">Karpenter for any cloud.</p>
-            <p>Give developers GPU access across supported clouds—or burst from your homelab—with your platform in control.</p>
+            <p className="source-lede">Live-validated on k3s with Linode CPU and GPU bursts.</p>
+            <p>Fly, AWS, GCP and Azure adapters are included but experimental.</p>
             <div className="source-actions">
               <a className="btn-solid" href="/docs/quickstart.html">Follow the quickstart <span aria-hidden="true">↗</span></a>
               <a className="btn-ghost" href="/docs/getting-started.html">Read the installation guide <span aria-hidden="true">↗</span></a>
@@ -96,7 +96,7 @@ export function SourceAvailable() {
         <details><summary>Does Yscale host the service for me?</summary><p>No. You operate central, the factory, connector, gateway, databases and mesh on infrastructure you manage. Self-hosting does not require a Yscale-hosted account.</p></details>
         <details><summary>Do I need a Tailscale account?</summary><p>No. Use your own Headscale coordinators for the workload mesh and the separate operations mesh. Infrastructure nodes use the Tailscale client software. Workload authors use Kubernetes access, without a VPN app on their laptops. <a href="/docs/factory-environment.html#self-hosted-ops-setup">Configure the operations mesh.</a></p></details>
         <details><summary>What do operators need to set up?</summary><p>Deploy the services, databases and mesh coordinators. Build your node images and configure provider credentials, quotas, TLS and private routing. The factory uses Linode for persistent coordination boxes, even when workers run elsewhere. <a href="/docs/self-hosted-mesh.html">Review the operator prerequisites.</a></p></details>
-        <details><summary>Which clouds and GPUs are supported?</summary><p>The source includes Fly CPU, Linode and AWS CPU/GPU, and Azure and GCP CPU paths. Azure and GCP GPU support is outside this release scope. Verify your specific region, image, instance shape and cluster before relying on it. <a href="/docs/configuration-status.html">Check configuration status.</a></p></details>
+        <details><summary>Which clouds and GPUs are supported?</summary><p>Live-validated on k3s with Linode CPU and GPU bursts. Fly, AWS, GCP and Azure adapters are included but experimental. Azure and GCP GPU support is outside this release scope. Verify your specific region, image, instance shape and cluster before relying on it. <a href="/docs/configuration-status.html">Check configuration status.</a></p></details>
         <details><summary>Is Yscale open source?</summary><p>Yscale is source-available. Restrictions on resale and third-party hosting do not meet the Open Source Definition. Read the license for the permissions and conditions that apply. <a href="https://opensource.org/osd">Read the Open Source Definition.</a></p></details>
       </section>
 

@@ -1,12 +1,4 @@
-// Command website-server serves the built yscale.sh marketing site and
-// captures waitlist signups (POST /api/signup) as JSON lines. It replaces
-// the previous nginx runtime so the site can take signups without a
-// third-party form service.
-//
-// The signup file is append-only: unsubscribes (POST /api/unsubscribe) are
-// tombstone records (action="unsubscribe") rather than deletions. The export
-// endpoint folds them: GET /api/signups?effective=1 returns only addresses
-// whose most recent record is a subscribe.
+// Command website-server serves the built yscale.sh site and installation APIs.
 package main
 
 import (
@@ -44,10 +36,8 @@ var vanityRedirects = map[string]string{
 	"/kubagachi": "https://github.com/Yscale-sh/Kubagachi",
 }
 
-// identityRedirects are resolved per request so one image can be promoted
-// unchanged: preview/LAN hosts use dev identity, while the production website
-// uses the production issuer. /account is deliberately absent — the SPA owns
-// that path and starts its own PKCE flow against the same issuer.
+// identityRedirects use only the installation's configured identity provider.
+// The SPA owns /account and starts its own PKCE flow.
 var identityRedirects = map[string]string{
 	"/access":   "/signup?return_to=%2Faccount",
 	"/login":    "/login?return_to=%2Faccount",
@@ -55,15 +45,8 @@ var identityRedirects = map[string]string{
 	"/waitlist": "/signup?return_to=%2Faccount",
 }
 
-func identityBaseURL(r *http.Request) string {
-	host := strings.ToLower(r.Host)
-	if parsedHost, _, err := net.SplitHostPort(host); err == nil {
-		host = parsedHost
-	}
-	if host == "yscale.sh" || host == "www.yscale.sh" {
-		return "https://id.kubagachi.com"
-	}
-	return "https://id-dev.yscale.sh"
+func identityBaseURL() string {
+	return strings.TrimRight(strings.TrimSpace(os.Getenv("YSCALE_ID_URL")), "/")
 }
 
 // rateLimiter is the in-memory limiter implementation: a per-IP
@@ -135,7 +118,6 @@ func newApp(staticDir, exportToken string, st store, lim limiter, px *accountPro
 func (a *app) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/signup", a.handleSignup)
-	mux.HandleFunc("POST /api/unsubscribe", a.handleUnsubscribe)
 	mux.HandleFunc("GET /api/signups", a.handleExport)
 	mux.HandleFunc("POST /api/auth/token", a.handleAuthToken)
 	mux.HandleFunc("GET /api/account", a.handleAccount)
@@ -195,7 +177,12 @@ func (a *app) routes() http.Handler {
 	for from, to := range identityRedirects {
 		dest := to // capture per iteration for the closure
 		mux.HandleFunc("GET "+from, func(w http.ResponseWriter, r *http.Request) {
-			http.Redirect(w, r, identityBaseURL(r)+dest, http.StatusFound)
+			baseURL := identityBaseURL()
+			if baseURL == "" {
+				http.Error(w, "This deployment has no identity provider configured. See /docs/quickstart.html", http.StatusNotFound)
+				return
+			}
+			http.Redirect(w, r, baseURL+dest, http.StatusFound)
 		})
 	}
 	mux.HandleFunc("/", a.handleStatic)
@@ -266,45 +253,6 @@ func (a *app) handleSignup(w http.ResponseWriter, r *http.Request) {
 	}
 	// The platform log pipeline is the durable backup store.
 	slog.Info("signup", "track", track, "email", email, "company", company)
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
-}
-
-// handleUnsubscribe appends an unsubscribe tombstone for the address. Same
-// defenses as signup (honeypot, rate limit, validation); always responds
-// {"ok":true} for a valid email, whether or not it was ever subscribed —
-// enumeration of the list is not possible through this endpoint.
-func (a *app) handleUnsubscribe(w http.ResponseWriter, r *http.Request) {
-	ip := clientIP(r)
-	if !a.limiter.allow(ip) {
-		writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "slow down"})
-		return
-	}
-	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
-	var req signupReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid json"})
-		return
-	}
-	if req.Website != "" {
-		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
-		return
-	}
-	email := strings.TrimSpace(req.Email)
-	if email == "" || len(email) > maxEmailLen || !emailRe.MatchString(email) {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid email"})
-		return
-	}
-	rec := signupRecord{
-		Ts:     time.Now().UTC().Format(time.RFC3339),
-		Email:  email,
-		Action: "unsubscribe",
-		IP:     ip,
-		UA:     r.UserAgent(),
-	}
-	if err := a.store.append(rec); err != nil {
-		slog.Error("unsubscribe append failed", "err", err)
-	}
-	slog.Info("unsubscribe", "email", email)
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 

@@ -973,7 +973,6 @@ website/src/pages/Console.jsx
 website/src/pages/ConsoleSections.jsx
 website/src/pages/OperatorTenants.jsx
 website/src/pages/SourceAvailable.jsx
-website/src/pages/Unsubscribe.jsx
 website/src/pages/Workloads.jsx
 website/src/styles/docs.css
 website/src/styles/source-release.css

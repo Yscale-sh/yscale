@@ -20,6 +20,7 @@ export function Nav() {
           <a href="/#planes">networking</a>
           <a href="/#license">license</a>
           <a href="/docs/">docs</a>
+          <a href="https://github.com/Yscale-sh/yscale">source</a>
           <a href="/docs/quickstart.html" className="nav-account">quickstart <span aria-hidden="true">↗</span></a>
         </div>
       </div>
