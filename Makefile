@@ -16,7 +16,6 @@ help:
 	@echo
 	@echo "  build            build the full self-hosted managed-mesh stack into bin/"
 	@echo "  run              start your managed-mesh central (configure .env.cloud first)"
-	@echo "  run-legacy-controller  explicitly run the old standalone Fly controller"
 	@echo "  test             go test ./... (no cluster or cloud account needed)"
 	@echo "  test-t1-contract deterministic T1 evidence/backend/crash contracts (race)"
 	@echo "  test-lifecycle-integration"
@@ -60,7 +59,7 @@ FLY_AGENT_IMAGE ?= $(IMAGE_REGISTRY)/$(FLY_AGENT_APP):$(TAG)
 FLY_FACTORY_APP   ?= yscale-factory
 FLY_FACTORY_IMAGE ?= $(IMAGE_REGISTRY)/$(FLY_FACTORY_APP):$(TAG)
 
-.PHONY: build run run-legacy-controller test test-t1-contract test-lifecycle-integration clean lint fmt \
+.PHONY: build run test test-t1-contract test-lifecycle-integration clean lint fmt \
         burst-base-image-build burst-base-image-push \
         burst-image-build burst-image-push \
         cloud-image-build cloud-image-push \
@@ -81,8 +80,6 @@ build:
 run: build
 	./bin/yscale-cloud
 
-run-legacy-controller: build
-	./bin/$(BINARY) -config yscale.yaml -kubeconfig $(KUBECONFIG)
 
 test:
 	go test ./...

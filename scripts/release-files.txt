@@ -980,7 +980,6 @@ website/src/styles/source-release.css
 website/src/styles/theme.css
 website/src/styles/workloads.css
 website/vite.config.js
-yscale.yaml
 factory/internal/boxes/acl_template_test.go
 factory/cmd/yscale-factory/api_async_test.go
 factory/cmd/yscale-factory/mesh_api.go
