@@ -552,7 +552,7 @@ func TestTailscaleAcceptRoutesIsExplicit(t *testing.T) {
 // gets a new bind address and new RBAC requirements under the same version.
 func TestChartVersionCarriesTheUpgradeNote(t *testing.T) {
 	out := render(t, "--set", "token=x", "--set", "tsAuthKey=y")
-	mustContain(t, out, "helm.sh/chart: yscale-agent-0.2.4", "chart version was not bumped for the public image default")
+	mustContain(t, out, "helm.sh/chart: yscale-agent-0.2.5", "chart version was not bumped for the v0.0.3-preview RBAC, CRD keep-policy and image-default changes")
 }
 
 // GKE bootstrap.authMode=gke renders the bind RBAC for
