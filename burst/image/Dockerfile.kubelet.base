@@ -43,7 +43,7 @@
 # a CNI plugin called by kubelet; the eBPF programs are .c files
 # compiled at runtime by clang (which we install in the base image).
 # No K8s DaemonSet, no containerd image at all.
-FROM quay.io/cilium/cilium:v1.19.4 AS cilium-extract
+FROM quay.io/cilium/cilium:v1.20.3 AS cilium-extract
 
 FROM debian:bookworm-slim AS runner-prebake
 ARG RUNNER_IMAGE=docker.io/summerwind/actions-runner:latest
