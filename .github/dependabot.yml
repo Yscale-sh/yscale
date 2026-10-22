@@ -18,8 +18,8 @@ updates:
     directories:
       - /
       - /website/server
-      # The downloadable module manifest mirrors the root module.
-      - /website/content/release
+      # website/content/release/go.mod is a generated download, not a module
+      # to tidy independently. Keep it in sync when reviewing root updates.
     schedule:
       interval: weekly
       day: monday
@@ -40,6 +40,8 @@ updates:
       timezone: Etc/UTC
     open-pull-requests-limit: 3
     groups:
+      react:
+        patterns: [react, react-dom]
       npm-minor-patch:
         patterns: ["*"]
         update-types: [minor, patch]
@@ -59,6 +61,10 @@ updates:
       time: "09:00"
       timezone: Etc/UTC
     open-pull-requests-limit: 3
+    # Stay on the selected Node LTS major; review future LTS moves explicitly.
+    ignore:
+      - dependency-name: node
+        update-types: [version-update:semver-major]
     groups:
       base-images:
         patterns: ["*"]

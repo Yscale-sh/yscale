@@ -1,0 +1,67 @@
+name: container builds
+
+on:
+  pull_request:
+    paths:
+      - '**/Dockerfile*'
+      - 'go.mod'
+      - 'go.sum'
+      - 'website/package.json'
+      - 'website/package-lock.json'
+      - 'website/server/go.mod'
+      - 'website/server/go.sum'
+      - '.github/workflows/container-build.yaml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: container / ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: connector
+            context: .
+            dockerfile: agent/build/Dockerfile.agent.buildkit
+          - name: central
+            context: .
+            dockerfile: central/build/Dockerfile.cloud.buildkit
+          - name: hosted-controller
+            context: .
+            dockerfile: central/build/Dockerfile.hosted-controller.buildkit
+          - name: factory
+            context: .
+            dockerfile: factory/build/Dockerfile.factory.buildkit
+          - name: kube-bench
+            context: kube-bench
+            dockerfile: kube-bench/Dockerfile
+          - name: website
+            context: website
+            dockerfile: website/Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build image without publishing
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: yscale-test:${{ matrix.name }}
+          cache-from: type=gha,scope=dependency-${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=dependency-${{ matrix.name }}
+      - name: Smoke test website image
+        if: matrix.name == 'website'
+        run: |
+          set -euo pipefail
+          docker run -d --name website-test -p 127.0.0.1::8080 yscale-test:website
+          trap 'docker logs website-test; docker rm -f website-test' EXIT
+          website_address=$(docker port website-test 8080/tcp)
+          curl --fail --retry 10 --retry-all-errors --retry-delay 1 --max-time 5 "http://${website_address}/healthz"
+          curl --fail "http://${website_address}/" | grep -q '<div id="root">'
