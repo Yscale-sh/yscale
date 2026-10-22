@@ -1,7 +1,7 @@
 # yscale-website — Vite/React static site served by a small Go server that
 # also captures waitlist signups (POST /api/signup -> /data/signups.jsonl).
 # Built by the platform image-builder (see deploy.yaml build block).
-FROM node:22-alpine AS web
+FROM node:25-alpine AS web
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci
