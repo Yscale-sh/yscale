@@ -60,7 +60,8 @@ jobs:
         if: matrix.name == 'website'
         run: |
           set -euo pipefail
-          docker run -d --name website-test -p 127.0.0.1:8080:8080 yscale-test:website
+          docker run -d --name website-test -p 127.0.0.1::8080 yscale-test:website
           trap 'docker logs website-test; docker rm -f website-test' EXIT
-          curl --fail --retry 10 --retry-all-errors --retry-delay 1 --max-time 5 http://127.0.0.1:8080/healthz
-          curl --fail http://127.0.0.1:8080/ | grep -q '<div id="root">'
+          website_address=$(docker port website-test 8080/tcp)
+          curl --fail --retry 10 --retry-all-errors --retry-delay 1 --max-time 5 "http://${website_address}/healthz"
+          curl --fail "http://${website_address}/" | grep -q '<div id="root">'
