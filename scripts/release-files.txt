@@ -4,10 +4,13 @@
 .env.factory.example
 .gitattributes
 .github/actionlint.yaml
+.github/dependabot.yml
+.github/workflows/container-build.yaml
 .github/workflows/ci.yaml
 .github/workflows/images.yaml
 .github/workflows/release.yaml
 .github/workflows/release-export.yaml
+.github/workflows/website.yaml
 .github/ISSUE_TEMPLATE/bug_report.md
 .github/ISSUE_TEMPLATE/feature_request.md
 .github/ISSUE_TEMPLATE/config.yml
