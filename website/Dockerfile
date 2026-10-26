@@ -15,7 +15,7 @@ RUN go mod download
 COPY server/ ./
 RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o /out/website-server .
 
-FROM alpine:3.20
+FROM alpine:3.24
 RUN adduser -D -u 10001 web && mkdir -p /data && chown web:web /data
 COPY --from=server /out/website-server /usr/local/bin/website-server
 COPY --from=web /app/dist /srv/dist

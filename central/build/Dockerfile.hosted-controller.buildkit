@@ -10,7 +10,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     go build -p=1 -trimpath -ldflags="-s -w" -o /yscale-hosted-controller ./central/cmd/yscale-hosted-controller
 
-FROM alpine:3.21
+FROM alpine:3.24
 RUN apk add --no-cache ca-certificates && adduser -D -H -u 65532 controller
 COPY --from=build /yscale-hosted-controller /usr/local/bin/yscale-hosted-controller
 USER 65532:65532
