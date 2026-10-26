@@ -5,7 +5,7 @@
 # Build:  CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
 #           go build -o bin/yscale-factory-linux-amd64 ./factory/cmd/yscale-factory
 # then:   docker build -f factory/build/Dockerfile.factory -t <registry>/yscale-factory:latest .
-FROM alpine:3.21
+FROM alpine:3.24
 RUN apk add --no-cache ca-certificates
 COPY bin/yscale-factory-linux-amd64 /usr/local/bin/yscale-factory
 WORKDIR /app

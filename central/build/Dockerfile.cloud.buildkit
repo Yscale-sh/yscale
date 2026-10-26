@@ -29,7 +29,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     go build -p=1 -trimpath -ldflags="-s -w" \
         -o /yscale-lifecycle-migrate ./central/cmd/yscale-lifecycle-migrate
 
-FROM alpine:3.21
+FROM alpine:3.24
 RUN apk add --no-cache ca-certificates
 COPY --from=build /yscale-cloud /usr/local/bin/yscale-cloud
 COPY --from=build /yscale-lifecycle-migrate /usr/local/bin/yscale-lifecycle-migrate

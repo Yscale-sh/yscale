@@ -24,7 +24,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     go build -trimpath -ldflags="-s -w" \
         -o /yscale-factory ./factory/cmd/yscale-factory
 
-FROM alpine:3.21
+FROM alpine:3.24
 RUN apk add --no-cache ca-certificates
 COPY --from=build /yscale-factory /usr/local/bin/yscale-factory
 WORKDIR /app
